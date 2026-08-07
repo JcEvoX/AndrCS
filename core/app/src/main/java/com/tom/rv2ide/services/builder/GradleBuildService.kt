@@ -99,6 +99,14 @@ class GradleBuildService :
   private var server: IToolingApiServer? = null
   private var eventListener: EventListener? = null
   private var isReleaseVariant = false
+  private val projectBuildLog =
+      ProjectBuildLog {
+        try {
+          ProjectManagerImpl.getInstance().projectDir
+        } catch (_: Exception) {
+          null
+        }
+      }
 
   private val buildServiceScope =
       CoroutineScope(Dispatchers.Default + CoroutineName("GradleBuildService"))
@@ -186,6 +194,7 @@ class GradleBuildService :
   }
 
   override fun onDestroy() {
+    projectBuildLog.close()
     mBinder?.release()
     mBinder = null
 
@@ -349,20 +358,24 @@ class GradleBuildService :
   }
 
   override fun logOutput(line: String) {
+    projectBuildLog.append(line)
     eventListener?.onOutput(line)
   }
 
   override fun prepareBuild(buildInfo: BuildInfo) {
+    projectBuildLog.start(buildInfo)
     updateNotification(getString(R.string.build_status_in_progress), true)
     eventListener?.prepareBuild(buildInfo)
   }
 
   override fun onBuildSuccessful(result: BuildResult) {
+    projectBuildLog.finish(successful = true)
     updateNotification(getString(R.string.build_status_sucess), false)
     eventListener?.onBuildSuccessful(result.tasks)
   }
 
   override fun onBuildFailed(result: BuildResult) {
+    projectBuildLog.finish(successful = false)
     updateNotification(getString(R.string.build_status_failed), false)
     eventListener?.onBuildFailed(result.tasks)
   }
