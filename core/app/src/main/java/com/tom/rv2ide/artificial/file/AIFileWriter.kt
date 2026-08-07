@@ -54,6 +54,7 @@ class AIFileWriter(private val context: Context) {
         }
 
         val file = File(filePath)
+        var backupCreated = false
 
         // Create parent directories if they don't exist
         try {
@@ -68,12 +69,13 @@ class AIFileWriter(private val context: Context) {
             if (backupResult is FileWriteResult.Error) {
                 return backupResult
             }
+            backupCreated = backupResult is FileWriteResult.Success
         }
 
         // Write the file
         return try {
             file.writeText(content)
-            FileWriteResult.Success(filePath, backupCreated = createBackup && file.exists())
+            FileWriteResult.Success(filePath, backupCreated = backupCreated)
         } catch (e: IOException) {
             FileWriteResult.Error("Failed to write file: ${e.message}")
         } catch (e: SecurityException) {

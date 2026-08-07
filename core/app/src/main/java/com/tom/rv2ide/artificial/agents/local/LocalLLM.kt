@@ -330,32 +330,7 @@ class LocalLLM : AIAgent {
       }
 
   private fun readRelevantFiles(): Map<String, String> {
-    val filesContent = mutableMapOf<String, String>()
-    val tree = projectTreeResult?.tree ?: return filesContent
-    
-    val filePaths = tree.lines().filter { it.isNotBlank() }
-    
-    filePaths.forEach { filePath ->
-      val trimmedPath = filePath.trim()
-      val file = File(trimmedPath)
-      
-      if (file.isFile && 
-          (trimmedPath.endsWith(".kt") || 
-           trimmedPath.endsWith(".java") ||
-           trimmedPath.endsWith(".xml") ||
-           trimmedPath.endsWith(".gradle") ||
-           trimmedPath.endsWith(".gradle.kts")) &&
-          !trimmedPath.contains("/build/") && 
-          !trimmedPath.contains("/.gradle/")) {
-        try {
-          val content = file.readText()
-          filesContent[trimmedPath] = content
-        } catch (e: Exception) {
-        }
-      }
-    }
-    
-    return filesContent
+    return projectTreeResult?.readRelevantFiles() ?: emptyMap()
   }
 
   fun readFile(filePath: String): String? {

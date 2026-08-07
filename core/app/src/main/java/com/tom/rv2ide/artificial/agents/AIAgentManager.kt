@@ -86,7 +86,7 @@ class AIAgentManager(private val context: Context) {
             currentAgent?.setContext(context)
             
             currentProjectRoot?.let { root ->
-                val projectData = ProjectData(context)
+                val projectData = ProjectData()
                 val projectTree = projectData.showProjectTree(root)
                 currentAgent?.setProjectData(projectTree)
             }
@@ -122,7 +122,7 @@ class AIAgentManager(private val context: Context) {
         if (!projectRoot.exists()) return false
 
         currentProjectRoot = projectRoot
-        val projectData = ProjectData(context)
+        val projectData = ProjectData()
         val projectTree = projectData.showProjectTree(projectRoot)
 
         currentAgent?.setProjectData(projectTree)

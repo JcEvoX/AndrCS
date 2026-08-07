@@ -74,11 +74,10 @@ class AICodeCompletionService(
             
             result.fold(
                 onSuccess = { response ->
-                    android.util.Log.d("AICodeCompletionService", "AI response: $response")
                     val completionResult = extractSuggestion(response)
                     if (completionResult != null && completionResult.text.isNotBlank()) {
                         completionCache[cacheKey] = completionResult
-                        android.util.Log.d("AICodeCompletionService", "Extracted suggestion: '${completionResult.text}'")
+                        android.util.Log.d("AICodeCompletionService", "Extracted a code suggestion")
                         return@withContext completionResult
                     } else {
                         android.util.Log.d("AICodeCompletionService", "Failed to extract suggestion")
@@ -138,9 +137,7 @@ Completion:""".trimIndent()
 
     private fun extractSuggestion(response: String): CompletionResult? {
         var cleaned = response.trim()
-        
-        android.util.Log.d("AICodeCompletionService", "Raw response: '$cleaned'")
-        
+
         cleaned = cleaned.replace(Regex("```[\\w]*\\n?"), "")
         cleaned = cleaned.replace("```", "")
         cleaned = cleaned.removePrefix("Completion:")
@@ -175,7 +172,7 @@ Completion:""".trimIndent()
         
         val isMultiLine = lines.size > 1
         
-        android.util.Log.d("AICodeCompletionService", "Final suggestion (${lines.size} lines): '$suggestionText'")
+        android.util.Log.d("AICodeCompletionService", "Prepared ${lines.size}-line suggestion")
         
         return CompletionResult(
             text = suggestionText,
