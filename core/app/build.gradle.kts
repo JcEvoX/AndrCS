@@ -97,7 +97,7 @@ android {
 
   buildTypes {
     debug {
-      signingConfig = signingConfigs.getByName("custom")
+      signingConfig = signingConfigs.getByName("debug")
     }
 
     release {
