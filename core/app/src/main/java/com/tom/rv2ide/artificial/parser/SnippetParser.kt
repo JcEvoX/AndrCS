@@ -91,7 +91,6 @@ class SnippetParser {
     fun cleanFileContent(content: String): String {
         Log.d(TAG, "=== CLEANING CONTENT ===")
         Log.d(TAG, "Original length: ${content.length}")
-        Log.d(TAG, "First 200 chars: ${content.take(200)}")
         
         var cleaned = content.trim()
         
@@ -120,8 +119,7 @@ class SnippetParser {
         cleaned = removeLeadingExplanations(cleaned)
         Log.d(TAG, "After removing leading text: ${cleaned.length} chars")
         
-        Log.d(TAG, "Final first 200 chars: ${cleaned.take(200)}")
-        Log.d(TAG, "Final last 200 chars: ${cleaned.takeLast(200)}")
+        Log.d(TAG, "Final content length: ${cleaned.length}")
         
         return cleaned.trim()
     }
