@@ -16,11 +16,11 @@ class ProjectDataTest {
   fun `project context excludes generated output and secrets`() {
     val project = temporaryFolder.newFolder("project")
     val source = File(project, "app/src/main/java/example/Main.kt").apply {
-      parentFile.mkdirs()
+      parentFile?.mkdirs()
       writeText("class Main")
     }
     File(project, "app/build/generated.kt").apply {
-      parentFile.mkdirs()
+      parentFile?.mkdirs()
       writeText("class Generated")
     }
     File(project, "local.properties").writeText("sdk.dir=/private/sdk")
