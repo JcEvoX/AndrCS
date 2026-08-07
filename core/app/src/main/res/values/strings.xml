@@ -18,7 +18,7 @@
 <resources>
   <!--  Required by F-Droid-->
   <!-- <string name="app_name" translatable="false">AndroidIDE</string> -->
-  <string name="app_name" translatable="false">Android Code Studio</string>
+  <string name="app_name" translatable="false">AndrCS</string>
   
   <!-- Asset Studio -->
   <string name="asset_studio_title">Asset Studio</string>
