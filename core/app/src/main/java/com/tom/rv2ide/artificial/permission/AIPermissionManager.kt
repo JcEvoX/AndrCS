@@ -37,6 +37,25 @@ class AIPermissionManager(private val context: Context) {
         private const val KEY_AUTO_BACKUP = "auto_backup"
     }
 
+    /** Seeds safe defaults once without overwriting later user choices. */
+    fun initializeDefaults() {
+        val editor = prefs.edit()
+        var changed = false
+        if (!prefs.contains(KEY_FILE_WRITE_ENABLED)) {
+            editor.putBoolean(KEY_FILE_WRITE_ENABLED, true)
+            changed = true
+        }
+        if (!prefs.contains(KEY_REQUIRE_CONFIRMATION)) {
+            editor.putBoolean(KEY_REQUIRE_CONFIRMATION, true)
+            changed = true
+        }
+        if (!prefs.contains(KEY_AUTO_BACKUP)) {
+            editor.putBoolean(KEY_AUTO_BACKUP, true)
+            changed = true
+        }
+        if (changed) editor.apply()
+    }
+
     /**
      * Checks if file writing is enabled in the application's preferences.
      *

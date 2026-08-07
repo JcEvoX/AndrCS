@@ -30,8 +30,13 @@ import com.tom.rv2ide.artificial.permissions.AIPermissionManager
 import com.tom.rv2ide.artificial.project.awareness.ProjectData
 import com.tom.rv2ide.artificial.secrets.ApiKey
 import java.io.File
+import kotlin.coroutines.resume
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import com.tom.rv2ide.artificial.dialogs.ProviderSwitchDialog
+import com.tom.rv2ide.artificial.dialogs.AIPermissionDialog
 
 /**
  * @author Mohammed-baqer-null @ https://github.com/Mohammed-baqer-null
@@ -54,8 +59,7 @@ class AIAgentManager(private val context: Context) {
         DeepSeek.registerAgent()
         LocalLLM.registerAgent()
         
-        permissionManager.setFileWriteEnabled(true)
-        permissionManager.setRequireConfirmation(false)
+        permissionManager.initializeDefaults()
         
         setProvider(currentProviderId)
     }
@@ -168,6 +172,15 @@ class AIAgentManager(private val context: Context) {
                             val modifications = processModifications(response, previousFileStates, callback)
 
                             if (modifications.isNotEmpty()) {
+                                val permissionDenied = modifications.firstOrNull {
+                                    it.writeResult is FileWriteResult.PermissionDenied
+                                }?.writeResult as? FileWriteResult.PermissionDenied
+                                if (permissionDenied != null) {
+                                    callback.onError(permissionDenied.reason)
+                                    success = true
+                                    return@fold
+                                }
+
                                 val allSuccessful = modifications.all { it.writeResult is FileWriteResult.Success }
 
                                 if (allSuccessful) {
@@ -310,8 +323,7 @@ class AIAgentManager(private val context: Context) {
                         val cleanedContent = parser.cleanFileContent(rawContent)
                         val previousContent = previousFileStates[currentFile]
 
-                        val writeResult = currentAgent?.writeFile(currentFile, cleanedContent)
-                            ?: FileWriteResult.Error("No agent initialized")
+                        val writeResult = writeFileWithPermission(currentFile, cleanedContent)
 
                         val success = writeResult is FileWriteResult.Success
                         currentAgent?.recordModification(currentFile, previousContent, cleanedContent, success)
@@ -338,8 +350,7 @@ class AIAgentManager(private val context: Context) {
                 val cleanedContent = parser.cleanFileContent(rawContent)
                 val previousContent = previousFileStates[currentFile]
 
-                val writeResult = currentAgent?.writeFile(currentFile, cleanedContent)
-                    ?: FileWriteResult.Error("No agent initialized")
+                val writeResult = writeFileWithPermission(currentFile, cleanedContent)
 
                 val success = writeResult is FileWriteResult.Success
                 currentAgent?.recordModification(currentFile, previousContent, cleanedContent, success)
@@ -352,6 +363,43 @@ class AIAgentManager(private val context: Context) {
         }
 
         return modifications
+    }
+
+    private suspend fun writeFileWithPermission(
+        filePath: String,
+        content: String
+    ): FileWriteResult {
+        if (!permissionManager.isFileWriteEnabled()) {
+            return FileWriteResult.PermissionDenied("AI file writing is disabled")
+        }
+        if (!permissionManager.isPathAllowed(filePath)) {
+            return FileWriteResult.PermissionDenied("Path is outside the opened project")
+        }
+        if (permissionManager.requiresConfirmation() && !confirmFileWrite(filePath)) {
+            return FileWriteResult.PermissionDenied("File write was denied")
+        }
+        return currentAgent?.writeFile(filePath, content)
+            ?: FileWriteResult.Error("No agent initialized")
+    }
+
+    private suspend fun confirmFileWrite(filePath: String): Boolean {
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { continuation ->
+                try {
+                    AIPermissionDialog(context).showFileWriteConfirmation(
+                        fileName = filePath,
+                        onConfirm = {
+                            if (continuation.isActive) continuation.resume(true)
+                        },
+                        onDeny = {
+                            if (continuation.isActive) continuation.resume(false)
+                        }
+                    )
+                } catch (_: Exception) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
+            }
+        }
     }
 
     private fun formatErrorMessage(error: Throwable): String {
