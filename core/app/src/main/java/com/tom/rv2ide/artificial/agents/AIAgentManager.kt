@@ -24,11 +24,15 @@ import com.tom.rv2ide.artificial.agents.anthropic.Anthropic
 import com.tom.rv2ide.artificial.agents.grok.Grok
 import com.tom.rv2ide.artificial.agents.deepseek.DeepSeek
 import com.tom.rv2ide.artificial.agents.local.LocalLLM
+import com.tom.rv2ide.artificial.file.AIFileWriter
 import com.tom.rv2ide.artificial.file.FileWriteResult
-import com.tom.rv2ide.artificial.parser.SnippetParser
 import com.tom.rv2ide.artificial.permissions.AIPermissionManager
 import com.tom.rv2ide.artificial.project.awareness.ProjectData
 import com.tom.rv2ide.artificial.secrets.ApiKey
+import com.tom.rv2ide.artificial.tools.LegacyFileModificationParser
+import com.tom.rv2ide.artificial.tools.ToolCall
+import com.tom.rv2ide.artificial.tools.ToolResult
+import com.tom.rv2ide.artificial.tools.WorkspaceToolExecutor
 import java.io.File
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -44,8 +48,12 @@ import com.tom.rv2ide.artificial.dialogs.AIPermissionDialog
 
 class AIAgentManager(private val context: Context) {
 
-    private val snippetParser = SnippetParser()
     private val permissionManager = AIPermissionManager(context)
+    private val legacyModificationParser = LegacyFileModificationParser()
+    private val workspaceToolExecutor =
+        WorkspaceToolExecutor(permissionManager, AIFileWriter(context)) { call ->
+            confirmFileWrite(call.path)
+        }
     private var currentProjectRoot: File? = null
     private var currentProviderId: String = "gemini"
     private var currentAgent: AIAgent? = null
@@ -305,81 +313,33 @@ class AIAgentManager(private val context: Context) {
         callback: AIAgentCallback
     ): List<BaseFileModification> {
         val modifications = mutableListOf<BaseFileModification>()
-        val parser = SnippetParser()
+        legacyModificationParser.parse(response).forEach { call ->
+            val fileName = File(call.path).name
+            callback.onFileModifying(call.path, fileName)
 
-        if (response.contains("FILE_TO_MODIFY:")) {
-            val lines = response.lines()
-            var currentFile: String? = null
-            val contentBuilder = StringBuilder()
-            var inContent = false
+            val writeResult = executeWriteTool(call)
+            val success = writeResult is FileWriteResult.Success
+            currentAgent?.recordModification(
+                call.path,
+                previousFileStates[call.path],
+                call.content,
+                success
+            )
+            callback.onFileModified(call.path, fileName, success)
+            delay(300)
 
-            for (line in lines) {
-                if (line.startsWith("FILE_TO_MODIFY:")) {
-                    if (currentFile != null && contentBuilder.isNotEmpty()) {
-                        val fileName = File(currentFile).name
-                        callback.onFileModifying(currentFile, fileName)
-
-                        val rawContent = contentBuilder.toString().trim()
-                        val cleanedContent = parser.cleanFileContent(rawContent)
-                        val previousContent = previousFileStates[currentFile]
-
-                        val writeResult = writeFileWithPermission(currentFile, cleanedContent)
-
-                        val success = writeResult is FileWriteResult.Success
-                        currentAgent?.recordModification(currentFile, previousContent, cleanedContent, success)
-
-                        callback.onFileModified(currentFile, fileName, success)
-                        delay(300)
-
-                        modifications.add(BaseFileModification(currentFile, cleanedContent, writeResult))
-                    }
-
-                    currentFile = line.substringAfter("FILE_TO_MODIFY:").trim()
-                    contentBuilder.clear()
-                    inContent = true
-                } else if (inContent) {
-                    contentBuilder.append(line).append("\n")
-                }
-            }
-
-            if (currentFile != null && contentBuilder.isNotEmpty()) {
-                val fileName = File(currentFile).name
-                callback.onFileModifying(currentFile, fileName)
-
-                val rawContent = contentBuilder.toString().trim()
-                val cleanedContent = parser.cleanFileContent(rawContent)
-                val previousContent = previousFileStates[currentFile]
-
-                val writeResult = writeFileWithPermission(currentFile, cleanedContent)
-
-                val success = writeResult is FileWriteResult.Success
-                currentAgent?.recordModification(currentFile, previousContent, cleanedContent, success)
-
-                callback.onFileModified(currentFile, fileName, success)
-                delay(300)
-
-                modifications.add(BaseFileModification(currentFile, cleanedContent, writeResult))
-            }
+            modifications.add(BaseFileModification(call.path, call.content, writeResult))
         }
 
         return modifications
     }
 
-    private suspend fun writeFileWithPermission(
-        filePath: String,
-        content: String
-    ): FileWriteResult {
-        if (!permissionManager.isFileWriteEnabled()) {
-            return FileWriteResult.PermissionDenied("AI file writing is disabled")
+    private suspend fun executeWriteTool(call: ToolCall.WriteFile): FileWriteResult {
+        return when (val result = workspaceToolExecutor.execute(call)) {
+            is ToolResult.Success -> FileWriteResult.Success(call.path, backupCreated = false)
+            is ToolResult.Rejected -> FileWriteResult.PermissionDenied(result.reason)
+            is ToolResult.Failure -> FileWriteResult.Error(result.reason)
         }
-        if (!permissionManager.isPathAllowed(filePath)) {
-            return FileWriteResult.PermissionDenied("Path is outside the opened project")
-        }
-        if (permissionManager.requiresConfirmation() && !confirmFileWrite(filePath)) {
-            return FileWriteResult.PermissionDenied("File write was denied")
-        }
-        return currentAgent?.writeFile(filePath, content)
-            ?: FileWriteResult.Error("No agent initialized")
     }
 
     private suspend fun confirmFileWrite(filePath: String): Boolean {
