@@ -49,7 +49,7 @@ fun navDrawerActivityProject() = baseProjectImpl {
 
         putStringRes("navigation_drawer_open", "Open navigation drawer")
         putStringRes("navigation_drawer_close", "Close navigation drawer")
-        putStringRes("nav_header_title", "AndrCS")
+        putStringRes("nav_header_title", "Android Code Studio")
         putStringRes("nav_header_subtitle", "telegram@rv2ide")
         putStringRes("nav_header_desc", "Navigation header")
         putStringRes("action_settings", "Settings")

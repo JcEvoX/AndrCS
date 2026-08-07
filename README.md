@@ -2,7 +2,7 @@
   <img src="https://avatars.githubusercontent.com/u/234419170?s=400&u=43571ebf481969baafb8399813ad57f46c19eb95&v=4" alt="AndroidIDE" width="80" height="80"/>
 </p>
 
-<h2 align="left"><b>AndrCS</b></h2>
+<h2 align="left"><b>Android Code Studio</b></h2>
 <p align="left">
   An IDE to develop real, Gradle-based Android applications on Android devices.
 <p><br>
@@ -66,19 +66,19 @@
     alt="Get it on F-Droid"
     height="80">](https://github.com/Mohammed-baqer-null/android-code-studio/releases)
 
-> _Please install AndrCS from trusted sources only i.e._
+> _Please install Android Code Studio from trusted sources only i.e._
 > - [_GitHub Releases_](https://github.com/Mohammed-baqer-null/android-code-studio/releases)
 
-- Download the AndrCS APK from the mentioned trusted sources.
+- Download the Android Code Studio APK from the mentioned trusted sources.
 - Follow the
   instructions [here](https://docs.androidide.com/tutorials/get-started.html) to
   install the build tools.
 
 ## Limitations
 
-- For working with projects in AndrCS, your project must use Android Gradle Plugin v7.2.0 or
+- For working with projects in AndroidCodeStudio, your project must use Android Gradle Plugin v7.2.0 or
   newer. Projects with older AGP must be migrated to newer versions.
-- SDK Manager is already included in Android SDK and is accessible in AndrCS via its Terminal.
+- SDK Manager is already included in Android SDK and is accessible in Android Code Studio via its Terminal.
   But, you cannot use it to install some tools (like NDK) because those tools are not built for
   Android.
 
@@ -115,18 +115,18 @@ Thanks to all the developers who have contributed to this project.
 ## License
 
 ```
-AndrCS is free software: you can redistribute it and/or modify
+AndroidCodeStudio is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-AndrCS is distributed in the hope that it will be useful,
+AndroidCodeStudio is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with AndrCS.  If not, see <https://www.gnu.org/licenses/>.
+along with AndroidCodeStudio.  If not, see <https://www.gnu.org/licenses/>.
 ```
 
 Any violations to the license can be reported either by opening an issue or writing a mail to us
