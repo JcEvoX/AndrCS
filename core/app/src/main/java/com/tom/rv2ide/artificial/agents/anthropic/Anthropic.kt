@@ -27,6 +27,7 @@ import com.tom.rv2ide.artificial.project.awareness.ProjectTreeResult
 import com.tom.rv2ide.artificial.file.AIFileWriter
 import com.tom.rv2ide.artificial.file.FileWriteResult
 import com.tom.rv2ide.artificial.exceptions.*
+import com.tom.rv2ide.artificial.secrets.ApiKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -67,8 +68,7 @@ class Anthropic : AIAgent {
               }
               
               override fun getApiKey(): String? {
-                  val prefManager = com.tom.rv2ide.preferences.internal.prefManager
-                  return prefManager.getString("ai_agent_anthropic_api_key", "")?.takeIf { it.isNotBlank() }
+                  return ApiKey.getAnthropicApiKey().takeIf { it.isNotBlank() }
               }
           })
       }

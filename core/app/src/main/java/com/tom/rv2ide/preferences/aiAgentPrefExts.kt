@@ -20,6 +20,7 @@ package com.tom.rv2ide.preferences
 import android.content.Context
 import androidx.preference.Preference
 import com.tom.rv2ide.R
+import com.tom.rv2ide.artificial.secrets.ApiKey
 import com.tom.rv2ide.preferences.internal.prefManager
 import com.tom.rv2ide.resources.R.string
 import kotlinx.parcelize.IgnoredOnParcel
@@ -126,7 +127,7 @@ private class GrokApiKey(
     val context = preference.context
 
     val editText = android.widget.EditText(context)
-    editText.setText(prefManager.getString("ai_agent_grok_api_key", ""))
+    editText.setText(ApiKey.getGrokApiKey())
     editText.hint = "Enter your xAI Grok API key"
 
     val dialog =
@@ -137,7 +138,7 @@ private class GrokApiKey(
             .setView(editText)
             .setPositiveButton("Save") { _, _ ->
               val apiKey = editText.text.toString().trim()
-              prefManager.putString("ai_agent_grok_api_key", apiKey)
+              ApiKey.setGrokApiKey(apiKey)
               preference.summary = getSummaryText()
             }
             .setNegativeButton("Cancel", null)
@@ -152,8 +153,8 @@ private class GrokApiKey(
   }
 
   private fun getSummaryText(): String {
-    val apiKey = prefManager.getString("ai_agent_grok_api_key", "")
-    return if (apiKey.isBlank()) "Click to set API key" else "API Key: ${apiKey.take(8)}..."
+    val apiKey = ApiKey.getGrokApiKey()
+    return if (apiKey.isBlank()) "Click to set API key" else "API key configured"
   }
 }
 
@@ -180,7 +181,7 @@ private class GeminiApiKey(
     val context = preference.context
 
     val editText = android.widget.EditText(context)
-    editText.setText(prefManager.getString("ai_agent_gemini_api_key", ""))
+    editText.setText(ApiKey.getGeminiApiKey())
     editText.hint = "Enter your Google Gemini API key"
 
     val dialog =
@@ -191,7 +192,7 @@ private class GeminiApiKey(
             .setView(editText)
             .setPositiveButton("Save") { _, _ ->
               val apiKey = editText.text.toString().trim()
-              prefManager.putString("ai_agent_gemini_api_key", apiKey)
+              ApiKey.setGeminiApiKey(apiKey)
               preference.summary = getSummaryText()
             }
             .setNegativeButton("Cancel", null)
@@ -206,8 +207,8 @@ private class GeminiApiKey(
   }
 
   private fun getSummaryText(): String {
-    val apiKey = prefManager.getString("ai_agent_gemini_api_key", "")
-    return if (apiKey.isBlank()) "Click to set API key" else "API Key: ${apiKey.take(8)}..."
+    val apiKey = ApiKey.getGeminiApiKey()
+    return if (apiKey.isBlank()) "Click to set API key" else "API key configured"
   }
 }
 
@@ -234,7 +235,7 @@ private class DeepseekApiKey(
     val context = preference.context
 
     val editText = android.widget.EditText(context)
-    editText.setText(prefManager.getString("ai_agent_deepseek_api_key", ""))
+    editText.setText(ApiKey.getDeepseekApiKey())
     editText.hint = "Enter your Deepseek API key"
 
     val dialog =
@@ -245,7 +246,7 @@ private class DeepseekApiKey(
             .setView(editText)
             .setPositiveButton("Save") { _, _ ->
               val apiKey = editText.text.toString().trim()
-              prefManager.putString("ai_agent_deepseek_api_key", apiKey)
+              ApiKey.setDeepseekApiKey(apiKey)
               preference.summary = getSummaryText()
             }
             .setNegativeButton("Cancel", null)
@@ -260,8 +261,8 @@ private class DeepseekApiKey(
   }
 
   private fun getSummaryText(): String {
-    val apiKey = prefManager.getString("ai_agent_deepseek_api_key", "")
-    return if (apiKey.isBlank()) "Click to set API key" else "API Key: ${apiKey.take(8)}..."
+    val apiKey = ApiKey.getDeepseekApiKey()
+    return if (apiKey.isBlank()) "Click to set API key" else "API key configured"
   }
 }
 
@@ -288,7 +289,7 @@ private class OpenAIApiKey(
     val context = preference.context
 
     val editText = android.widget.EditText(context)
-    editText.setText(prefManager.getString("ai_agent_openai_api_key", ""))
+    editText.setText(ApiKey.getOpenAIApiKey())
     editText.hint = "Enter your OpenAI API key"
 
     val dialog =
@@ -299,7 +300,7 @@ private class OpenAIApiKey(
             .setView(editText)
             .setPositiveButton("Save") { _, _ ->
               val apiKey = editText.text.toString().trim()
-              prefManager.putString("ai_agent_openai_api_key", apiKey)
+              ApiKey.setOpenAIApiKey(apiKey)
               preference.summary = getSummaryText()
             }
             .setNegativeButton("Cancel", null)
@@ -314,8 +315,8 @@ private class OpenAIApiKey(
   }
 
   private fun getSummaryText(): String {
-    val apiKey = prefManager.getString("ai_agent_openai_api_key", "")
-    return if (apiKey.isBlank()) "Click to set API key" else "API Key: ${apiKey.take(8)}..."
+    val apiKey = ApiKey.getOpenAIApiKey()
+    return if (apiKey.isBlank()) "Click to set API key" else "API key configured"
   }
 }
 
@@ -342,7 +343,7 @@ private class AnthropicApiKey(
     val context = preference.context
 
     val editText = android.widget.EditText(context)
-    editText.setText(prefManager.getString("ai_agent_anthropic_api_key", ""))
+    editText.setText(ApiKey.getAnthropicApiKey())
     editText.hint = "Enter your Anthropic API key"
 
     val dialog =
@@ -353,7 +354,7 @@ private class AnthropicApiKey(
             .setView(editText)
             .setPositiveButton("Save") { _, _ ->
               val apiKey = editText.text.toString().trim()
-              prefManager.putString("ai_agent_anthropic_api_key", apiKey)
+              ApiKey.setAnthropicApiKey(apiKey)
               preference.summary = getSummaryText()
             }
             .setNegativeButton("Cancel", null)
@@ -368,7 +369,7 @@ private class AnthropicApiKey(
   }
 
   private fun getSummaryText(): String {
-    val apiKey = prefManager.getString("ai_agent_anthropic_api_key", "")
-    return if (apiKey.isBlank()) "Click to set API key" else "API Key: ${apiKey.take(8)}..."
+    val apiKey = ApiKey.getAnthropicApiKey()
+    return if (apiKey.isBlank()) "Click to set API key" else "API key configured"
   }
 }
