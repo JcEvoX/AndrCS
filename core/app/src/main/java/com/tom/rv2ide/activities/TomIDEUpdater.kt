@@ -31,6 +31,7 @@ import androidx.core.content.FileProvider
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.tom.rv2ide.BuildConfig
+import com.tom.rv2ide.buildinfo.BuildInfo
 import com.tom.rv2ide.resources.R
 import java.io.*
 import java.net.HttpURLConnection
@@ -43,8 +44,6 @@ class TomIDEUpdater(private val context: Context) {
 
   companion object {
     private const val TAG = "TomIDEUpdater"
-    private const val UPDATE_JSON_URL =
-        "https://raw.githubusercontent.com/AndroidCSOfficial/android-code-studio/refs/heads/dev/updater.json"
     private const val DOWNLOAD_NOTIFICATION_ID = 1001
   }
 
@@ -85,7 +84,7 @@ class TomIDEUpdater(private val context: Context) {
   private suspend fun fetchUpdateInfo(): UpdateInfo? {
     return withContext(Dispatchers.IO) {
       try {
-        val url = URL(UPDATE_JSON_URL)
+        val url = URL(updateManifestUrl())
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.connectTimeout = 10000
@@ -105,6 +104,9 @@ class TomIDEUpdater(private val context: Context) {
       }
     }
   }
+
+  private fun updateManifestUrl(): String =
+      "https://raw.githubusercontent.com/${BuildInfo.REPO_OWNER}/${BuildInfo.REPO_NAME}/dev/updater.json"
 
   private fun parseUpdateInfo(jsonString: String): UpdateInfo? {
     return try {

@@ -22,15 +22,15 @@ import org.gradle.api.Project
 /** @author Akash Yadav */
 object ProjectConfig {
 
-  /*
-  * https://github.com/AndroidCSOfficial
-  */
   const val REPO_HOST = "github.com"
-  const val REPO_OWNER = "AndroidCSOfficial"
-  const val REPO_NAME = "android-code-studio"
+  const val REPO_OWNER = "JcEvoX"
+  const val REPO_NAME = "AndrCS"
 
   const val ACS_BUILD_SYSTEM_REPONAME = "acs-build-system"
-  const val ACS_BUILD_SYSTEM_REPOURL = "https://$REPO_HOST/$REPO_OWNER/$ACS_BUILD_SYSTEM_REPONAME"
+  // Development tooling may track the upstream build-system project independently of this app's
+  // release channel.
+  const val ACS_BUILD_SYSTEM_REPOURL =
+    "https://$REPO_HOST/AndroidCSOfficial/$ACS_BUILD_SYSTEM_REPONAME"
   
   const val REPO_URL = "https://$REPO_HOST/$REPO_OWNER/$REPO_NAME"
   const val SCM_GIT =
