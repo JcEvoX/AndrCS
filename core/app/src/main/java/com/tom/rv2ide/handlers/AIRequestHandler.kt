@@ -7,6 +7,7 @@ import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.textview.MaterialTextView
 import androidx.recyclerview.widget.RecyclerView
 import android.widget.LinearLayout
+import com.tom.rv2ide.adapters.AgentTimelineAdapter
 import com.tom.rv2ide.adapters.FileModificationAdapter
 import com.tom.rv2ide.artificial.agents.AIAgentManager
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,8 @@ class AIRequestHandler(
     private val executeBtn: MaterialButton,
     private val fileModificationList: RecyclerView,
     private val fileModificationAdapter: FileModificationAdapter,
+    private val agentTimelineList: RecyclerView,
+    private val agentTimelineAdapter: AgentTimelineAdapter,
     private val summaryCard: LinearLayout,
     private val onFileOpen: (String) -> Unit,
     private val onTypeText: (String, Long) -> Unit,
@@ -43,6 +46,12 @@ class AIRequestHandler(
                     summaryCard.visibility = View.GONE
                     fileModificationAdapter.clear()
                     fileModificationList.visibility = View.GONE
+                    agentTimelineAdapter.clear()
+                    appendTimeline(
+                        AgentTimelineAdapter.Kind.USER,
+                        "Request",
+                        userRequest
+                    )
                 }
                 
                 executeAIRequest(userRequest)
@@ -62,6 +71,7 @@ class AIRequestHandler(
             override fun onProcessing(message: String) {
                 lifecycleScope.launch(Dispatchers.Main) {
                     statusText.text = message
+                    appendTimeline(AgentTimelineAdapter.Kind.PLAN, "Agent", message)
                 }
             }
 
@@ -71,6 +81,11 @@ class AIRequestHandler(
                         fileModificationList.visibility = View.VISIBLE
                     }
                     fileModificationAdapter.addItem(fileName)
+                    appendTimeline(
+                        AgentTimelineAdapter.Kind.TOOL,
+                        "write_file",
+                        "Preparing $fileName for approval and application"
+                    )
                 }
             }
 
@@ -81,6 +96,11 @@ class AIRequestHandler(
                     if (getCurrentFile()?.name == fileName && success) {
                         refreshEditor()
                     }
+                    appendTimeline(
+                        if (success) AgentTimelineAdapter.Kind.RESULT else AgentTimelineAdapter.Kind.ERROR,
+                        if (success) "Tool completed" else "Tool failed",
+                        if (success) "Updated $fileName" else "Could not update $fileName"
+                    )
                 }
             }
 
@@ -124,6 +144,11 @@ class AIRequestHandler(
     ) {
         progressIndicator.visibility = View.GONE
         statusText.text = "✅ Operation completed"
+        appendTimeline(
+            AgentTimelineAdapter.Kind.RESULT,
+            "Request completed",
+            "${summary.successfulFiles} file(s) updated"
+        )
         summaryText.text = buildSummaryText(summary)
         summaryCard.visibility = View.VISIBLE
         
@@ -142,6 +167,7 @@ class AIRequestHandler(
         progressIndicator.visibility = View.GONE
         executeBtn.isEnabled = true
         statusText.text = response
+        appendTimeline(AgentTimelineAdapter.Kind.RESULT, "Response", response)
         summaryCard.visibility = View.GONE
         fileModificationList.visibility = View.GONE
     }
@@ -157,6 +183,7 @@ $message
 
 Please check the error message and try again.
         """.trimIndent()
+        appendTimeline(AgentTimelineAdapter.Kind.ERROR, "Agent error", message)
     }
     
     private fun buildSummaryText(summary: AIAgentManager.ModificationSummary): String {
@@ -181,5 +208,14 @@ Please check the error message and try again.
     
     fun cancel() {
         executionJob?.cancel()
+    }
+
+    private fun appendTimeline(
+        kind: AgentTimelineAdapter.Kind,
+        title: String,
+        detail: String
+    ) {
+        agentTimelineAdapter.add(AgentTimelineAdapter.Event(kind, title, detail))
+        agentTimelineList.scrollToPosition(agentTimelineAdapter.itemCount - 1)
     }
 }

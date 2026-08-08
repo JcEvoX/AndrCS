@@ -33,6 +33,7 @@ import androidx.recyclerview.widget.RecyclerView
 import android.widget.LinearLayout
 import android.content.SharedPreferences
 import com.tom.rv2ide.R
+import com.tom.rv2ide.adapters.AgentTimelineAdapter
 import com.tom.rv2ide.adapters.FileModificationAdapter
 import com.tom.rv2ide.artificial.agents.AIAgentManager
 import com.tom.rv2ide.managers.CodeCompletionManager
@@ -58,8 +59,10 @@ class ChatFragment : Fragment() {
     private lateinit var summaryText: MaterialTextView
     private lateinit var progressIndicator: CircularProgressIndicator
     private lateinit var fileModificationList: RecyclerView
+    private lateinit var agentTimelineList: RecyclerView
     private lateinit var summaryCard: LinearLayout
     private lateinit var fileModificationAdapter: FileModificationAdapter
+    private lateinit var agentTimelineAdapter: AgentTimelineAdapter
     
     private lateinit var codeCompletionManager: CodeCompletionManager
     private lateinit var aiRequestHandler: AIRequestHandler
@@ -137,6 +140,7 @@ class ChatFragment : Fragment() {
         summaryText = view.findViewById(R.id.summaryText)
         progressIndicator = view.findViewById(R.id.progressIndicator)
         fileModificationList = view.findViewById(R.id.fileModificationList)
+        agentTimelineList = view.findViewById(R.id.agentTimelineList)
         summaryCard = view.findViewById(R.id.summaryCard)
     }
 
@@ -150,6 +154,13 @@ class ChatFragment : Fragment() {
         
         fileModificationAdapter.setOnItemClickListener { fileName ->
             openFileInEditor(fileName)
+        }
+
+        agentTimelineAdapter = AgentTimelineAdapter()
+        agentTimelineList.apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = agentTimelineAdapter
+            isNestedScrollingEnabled = false
         }
     }
 
@@ -169,6 +180,8 @@ class ChatFragment : Fragment() {
             executeBtn,
             fileModificationList,
             fileModificationAdapter,
+            agentTimelineList,
+            agentTimelineAdapter,
             summaryCard,
             onFileOpen = { fileName ->
                 openFileInEditor(fileName)
