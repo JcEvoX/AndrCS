@@ -3,28 +3,87 @@ package com.tom.rv2ide.artificial.tools
 import com.tom.rv2ide.artificial.file.AIFileWriter
 import com.tom.rv2ide.artificial.file.FileWriteResult
 import com.tom.rv2ide.artificial.permissions.AIPermissionManager
+import java.io.File
 
 /**
- * Single enforcement point for mutating AI workspace operations.
- *
- * Reads will be added alongside provider-native tool calling. Writes are implemented first so the
- * legacy response format and future tool-calling adapters share exactly the same policy.
+ * Single enforcement point for AI workspace operations.
  */
 class WorkspaceToolExecutor(
     private val permissionManager: AIPermissionManager,
     private val fileWriter: AIFileWriter,
+    private val workspaceRoot: () -> File?,
     private val requestApproval: suspend (ToolCall.WriteFile) -> Boolean,
 ) {
 
   suspend fun execute(call: ToolCall): ToolResult =
       when (call) {
+        is ToolCall.ListFiles -> executeListFiles(call)
+        is ToolCall.ReadFile -> executeReadFile(call)
+        is ToolCall.SearchFiles -> executeSearchFiles(call)
         is ToolCall.WriteFile -> executeWrite(call)
-        else ->
-            ToolResult.Rejected(
-                call.id,
-                "${call.name} is not enabled by this workspace executor",
-            )
       }
+
+  private fun executeListFiles(call: ToolCall.ListFiles): ToolResult {
+    val directory = resolveWorkspacePath(call.path)
+        ?: return ToolResult.Rejected(call.id, "Path is outside the opened project")
+    if (!directory.isDirectory) return ToolResult.Failure(call.id, "Path is not a directory")
+
+    val children =
+        directory.listFiles()
+            ?.asSequence()
+            ?.filterNot(::isSensitive)
+            ?.sortedBy { it.name.lowercase() }
+            ?.take(MAX_LIST_ENTRIES)
+            ?.joinToString("\n") { child ->
+              val relative = child.relativeTo(workspaceRoot()!!.canonicalFile).path
+              if (child.isDirectory) "$relative/" else relative
+            }
+            .orEmpty()
+    return ToolResult.Success(call.id, children.ifEmpty { "(empty)" })
+  }
+
+  private fun executeReadFile(call: ToolCall.ReadFile): ToolResult {
+    val file = resolveWorkspacePath(call.path)
+        ?: return ToolResult.Rejected(call.id, "Path is outside the opened project")
+    if (!file.isFile) return ToolResult.Failure(call.id, "File does not exist")
+    if (isSensitive(file)) return ToolResult.Rejected(call.id, "File is excluded from AI access")
+    if (file.length() > MAX_READ_BYTES) return ToolResult.Rejected(call.id, "File exceeds read limit")
+
+    return try {
+      ToolResult.Success(call.id, file.readText())
+    } catch (error: Exception) {
+      ToolResult.Failure(call.id, "Unable to read file: ${error.message}")
+    }
+  }
+
+  private fun executeSearchFiles(call: ToolCall.SearchFiles): ToolResult {
+    if (call.query.isBlank()) return ToolResult.Rejected(call.id, "Search query is blank")
+    val directory = resolveWorkspacePath(call.path)
+        ?: return ToolResult.Rejected(call.id, "Path is outside the opened project")
+    if (!directory.isDirectory) return ToolResult.Failure(call.id, "Path is not a directory")
+
+    val root = workspaceRoot()?.canonicalFile
+        ?: return ToolResult.Rejected(call.id, "No project is open")
+    val matches = mutableListOf<String>()
+    directory.walkTopDown()
+        .onEnter { candidate -> !isSensitive(candidate) }
+        .filter { it.isFile && !isSensitive(it) && it.length() <= MAX_READ_BYTES }
+        .take(MAX_SEARCHED_FILES)
+        .forEach { file ->
+          try {
+            file.useLines { lines ->
+              lines.forEachIndexed { index, line ->
+                if (line.contains(call.query)) {
+                  matches += "${file.relativeTo(root).path}:${index + 1}: ${line.take(MAX_MATCH_CHARS)}"
+                }
+              }
+            }
+          } catch (_: Exception) {
+            // Ignore files that cannot be decoded as text.
+          }
+        }
+    return ToolResult.Success(call.id, matches.take(MAX_SEARCH_RESULTS).joinToString("\n").ifEmpty { "(no matches)" })
+  }
 
   private suspend fun executeWrite(call: ToolCall.WriteFile): ToolResult {
     if (!permissionManager.isFileWriteEnabled()) {
@@ -47,5 +106,31 @@ class WorkspaceToolExecutor(
       is FileWriteResult.PermissionDenied -> ToolResult.Rejected(call.id, result.reason)
       is FileWriteResult.Error -> ToolResult.Failure(call.id, result.message)
     }
+  }
+
+  private fun resolveWorkspacePath(path: String): File? {
+    val root = workspaceRoot()?.canonicalFile ?: return null
+    return try {
+      val candidate = File(path).let { if (it.isAbsolute) it else File(root, path) }.canonicalFile
+      candidate.takeIf { it.toPath().startsWith(root.toPath()) }
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun isSensitive(file: File): Boolean {
+    val name = file.name.lowercase()
+    return name in SENSITIVE_FILE_NAMES ||
+        file.path.split(File.separatorChar).any { it in EXCLUDED_DIRECTORY_NAMES }
+  }
+
+  private companion object {
+    const val MAX_LIST_ENTRIES = 500
+    const val MAX_READ_BYTES = 512 * 1024L
+    const val MAX_SEARCHED_FILES = 500
+    const val MAX_SEARCH_RESULTS = 100
+    const val MAX_MATCH_CHARS = 300
+    val SENSITIVE_FILE_NAMES = setOf(".env", "local.properties", "keystore.properties")
+    val EXCLUDED_DIRECTORY_NAMES = setOf(".git", ".gradle", ".andrcs", "build")
   }
 }

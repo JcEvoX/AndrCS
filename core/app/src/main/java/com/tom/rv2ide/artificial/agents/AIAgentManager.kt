@@ -51,9 +51,11 @@ class AIAgentManager(private val context: Context) {
     private val permissionManager = AIPermissionManager(context)
     private val legacyModificationParser = LegacyFileModificationParser()
     private val workspaceToolExecutor =
-        WorkspaceToolExecutor(permissionManager, AIFileWriter(context)) { call ->
-            confirmFileWrite(call.path)
-        }
+        WorkspaceToolExecutor(
+            permissionManager,
+            AIFileWriter(context),
+            { currentProjectRoot },
+        ) { call -> confirmFileWrite(call.path) }
     private var currentProjectRoot: File? = null
     private var currentProviderId: String = "gemini"
     private var currentAgent: AIAgent? = null
