@@ -61,13 +61,14 @@ val Project.simpleVersionName: String
 private var shouldPrintVersionCode = true
 val Project.projectVersionCode: Int
   get() {
+    val versionCode =
+        System.getenv("PROJECT_CONFIG_KT_BASE_VERSION_CODE")?.toIntOrNull()
+            ?: rootProject.extensions.extraProperties
+                .get("androidVersionCode")
+                .toString()
+                .toIntOrNull()
+            ?: error("androidVersionCode is not configured in settings.gradle.kts")
 
-    // I don't like this being hardcoded here, so change it if you want.
-    val baseVersionCode = System.getenv("PROJECT_CONFIG_KT_BASE_VERSION_CODE")?.toIntOrNull() ?: 1024
-    // Default value (1020) is used if not specified. The middle digit (e.g., 10<2>0) represents the revision version, such as 1.0.0+gh.r0<2>.
-    
-    val versionCode = baseVersionCode
-    
     if (shouldPrintVersionCode) {
       logger.warn("Version code is '$versionCode'")
       shouldPrintVersionCode = false

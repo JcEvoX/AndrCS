@@ -70,11 +70,19 @@ dependencyResolutionManagement {
 
 gradle.rootProject {
     val appMainVersion = System.getenv("MAIN_VERSION") ?: "1.0.0"
-    val revision = "r${System.getenv("REVISION_NUM") ?: "04"}"
+    val revisionNumber = (System.getenv("REVISION_NUM") ?: "04").trimStart('0').ifEmpty { "0" }
+    val revision = "r$revisionNumber"
     val baseVersion = "$appMainVersion+gh.$revision"
+    val versionCode =
+        System.getenv("PROJECT_CONFIG_KT_BASE_VERSION_CODE")?.toIntOrNull()
+            ?: (1021 + revisionNumber.toIntOrNull().orZero())
+
     println("Android code studio version: $baseVersion")
     project.setProperty("version", baseVersion)
+    project.extensions.extraProperties.set("androidVersionCode", versionCode)
 }
+
+private fun Int?.orZero(): Int = this ?: 0
 
 rootProject.name = "AndroidCodeStudio"
 
