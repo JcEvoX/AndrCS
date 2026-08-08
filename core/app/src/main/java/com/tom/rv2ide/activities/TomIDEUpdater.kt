@@ -30,6 +30,7 @@ import android.widget.TextView
 import androidx.core.content.FileProvider
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.tom.rv2ide.BuildConfig
 import com.tom.rv2ide.resources.R
 import java.io.*
 import java.net.HttpURLConnection
@@ -62,6 +63,12 @@ class TomIDEUpdater(private val context: Context) {
   private var progressText: TextView? = null
 
   fun checkForUpdates() {
+    // CI/debug APKs are test artifacts, not update channels. Checking the public updater feed
+    // against a locally built debug package creates a misleading update prompt on every install.
+    if (BuildConfig.DEBUG) {
+      Log.d(TAG, "Skipping app update check for a debug build")
+      return
+    }
     CoroutineScope(Dispatchers.IO).launch {
       try {
         val updateInfo = fetchUpdateInfo()
