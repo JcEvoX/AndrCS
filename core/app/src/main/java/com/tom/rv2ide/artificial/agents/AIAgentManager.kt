@@ -29,10 +29,13 @@ import com.tom.rv2ide.artificial.file.FileWriteResult
 import com.tom.rv2ide.artificial.permissions.AIPermissionManager
 import com.tom.rv2ide.artificial.project.awareness.ProjectData
 import com.tom.rv2ide.artificial.secrets.ApiKey
+import com.tom.rv2ide.artificial.agents.AgentEvent
 import com.tom.rv2ide.artificial.tools.LegacyFileModificationParser
 import com.tom.rv2ide.artificial.tools.ToolCall
+import com.tom.rv2ide.artificial.tools.ToolCallParser
 import com.tom.rv2ide.artificial.tools.ToolResult
 import com.tom.rv2ide.artificial.tools.WorkspaceToolExecutor
+import com.tom.rv2ide.artificial.tools.WorkspaceToolRegistry
 import java.io.File
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +58,7 @@ class AIAgentManager(private val context: Context) {
             permissionManager,
             AIFileWriter(context),
             { currentProjectRoot },
-        ) { call -> confirmFileWrite(call.path) }
+        ) { path -> confirmFileWrite(path) }
     private var currentProjectRoot: File? = null
     private var currentProviderId: String = "gemini"
     private var currentAgent: AIAgent? = null
@@ -147,6 +150,123 @@ class AIAgentManager(private val context: Context) {
 
     fun clearConversation() {
         currentAgent?.clearConversation()
+    }
+
+    /**
+     * 流式入口:直接把 [AIAgent.chat] 的 `Flow<AgentEvent>` 透传给 UI。
+     *
+     * 与 [executeChat] 不同,这里不做任何字符串拍扁,UI 能拿到完整的类型化事件流,
+     * 可以区分 Thinking / TextDelta / ToolCall / ToolResult / FinalResponse / Error,
+     * 实现 Trae/Cline 风格的流式 agent UI(气泡流式追加、思考可折叠、工具卡可折叠)。
+     *
+     * 工具执行仍走 [workspaceToolExecutor],写操作仍走用户确认。
+     *
+     * 当 provider 未覆盖 [AIAgent.chat] 时,默认实现回退到 generateCode 并发出
+     * FinalResponse 事件,所以非 OpenAI provider 也能用此入口。
+     */
+    fun executeChatStreaming(userRequest: String): kotlinx.coroutines.flow.Flow<AgentEvent> {
+        val agent = currentAgent
+        return if (agent == null) {
+            kotlinx.coroutines.flow.flowOf(AgentEvent.Error("No agent initialized"))
+        } else {
+            agent.chat(
+                prompt = userRequest,
+                tools = WorkspaceToolRegistry.definitions,
+                onToolCall = { call -> workspaceToolExecutor.execute(call) },
+            )
+        }
+    }
+
+    /**
+     * 新接口:消费 `Flow<AgentEvent>`,把类型化的事件映射到现有 [AIAgentCallback]。
+     *
+     * 调用 [AIAgent.chat] 并把 [WorkspaceToolRegistry.definitions] 作为工具集传给模型。
+     * 工具执行委托给 [workspaceToolExecutor],写操作仍走用户确认。
+     *
+     * 当 provider 未覆盖 chat() 时,默认实现回退到 generateCode 并包装为
+     * AgentEvent.FinalResponse,所以非 OpenAI 的 provider 不需要改动即可使用此入口。
+     */
+    suspend fun executeChat(userRequest: String, callback: AIAgentCallback) {
+        val agent = currentAgent
+        if (agent == null) {
+            callback.onError("No agent initialized")
+            return
+        }
+
+        agent.resetAttemptCount()
+        callback.onProcessing("Analyzing your request...")
+
+        val modifications = mutableListOf<ModificationResult>()
+        val textBuilder = StringBuilder()
+        // tool_call_id → path,用于 ToolResult 事件回查 mutating 工具的目标文件。
+        val pathByCallId = mutableMapOf<String, String>()
+
+        try {
+            agent.chat(
+                prompt = userRequest,
+                tools = WorkspaceToolRegistry.definitions,
+                onToolCall = { call -> workspaceToolExecutor.execute(call) },
+            ).collect { event ->
+                when (event) {
+                    is AgentEvent.Thinking -> {
+                        callback.onProcessing("💭 thinking...")
+                    }
+                    is AgentEvent.TextDelta -> {
+                        textBuilder.append(event.delta)
+                    }
+                    is AgentEvent.ToolCall -> {
+                        // 记录 path 供 ToolResult 回查;对 mutating 工具同时回写 file modifying。
+                        val path = extractPathFromArguments(event.argumentsJson)
+                        if (path != null) pathByCallId[event.id] = path
+                        if (WorkspaceToolRegistry.requiresConfirmation(event.name) && path != null) {
+                            callback.onFileModifying(path, File(path).name)
+                        }
+                    }
+                    is AgentEvent.ToolResult -> {
+                        if (WorkspaceToolRegistry.requiresConfirmation(event.toolName)) {
+                            val path = pathByCallId[event.callId]
+                            if (path != null) {
+                                callback.onFileModified(path, File(path).name, event.successful)
+                                if (event.successful && event.toolName == "write_file") {
+                                    modifications += ModificationResult(
+                                        filePath = path,
+                                        content = "",
+                                        success = true,
+                                        message = "Modified via tool call",
+                                        isNewFile = !File(path).exists(),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    is AgentEvent.FinalResponse -> {
+                        val response = event.text.ifBlank { textBuilder.toString() }
+                        if (modifications.isEmpty()) {
+                            val summary = ModificationSummary(0, 0, 0, 0, 0, emptyList())
+                            callback.onTextResponse(response, summary)
+                        } else {
+                            val summary = createSummary(modifications)
+                            callback.onSuccess(response, modifications, summary)
+                        }
+                    }
+                    is AgentEvent.Error -> {
+                        callback.onError(event.message)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AIAgentManager", "executeChat failed", e)
+            callback.onError(formatErrorMessage(e))
+        }
+    }
+
+    private fun extractPathFromArguments(argumentsJson: String): String? {
+        return try {
+            val obj = if (argumentsJson.isBlank()) org.json.JSONObject() else org.json.JSONObject(argumentsJson)
+            obj.optString("path").ifBlank { null }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     suspend fun executeRequest(userRequest: String, callback: AIAgentCallback) {
