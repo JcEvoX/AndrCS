@@ -1,48 +1,94 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  流式 Agent 聊天布局。
+  - 顶部 header:标题 + 项目作用域徽章 + (可选)model chip。
+  - 中间 RecyclerView:用户/助手气泡 + 思考 + 工具卡 + 错误,多 view-type。
+  - 底部输入区:多行 prompt + Send/Stop 切换按钮。
+  替换了旧的 statusCard + fileModificationList + agentTimelineList + summaryCard 三块。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <!-- Header -->
     <LinearLayout
         android:id="@+id/mainContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:gravity="center_vertical"
         android:elevation="2dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:layout_weight="1"
+            android:text="Workspace agent"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
 
-            <com.google.android.material.textview.MaterialTextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Workspace agent"
-                android:textAppearance="?attr/textAppearanceTitleMedium" />
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/sessionSafetyText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Project scoped"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            android:textColor="?attr/colorPrimary" />
 
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/sessionSafetyText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Project scoped"
-                android:textAppearance="?attr/textAppearanceLabelMedium"
-                android:textColor="?attr/colorPrimary" />
-        </LinearLayout>
+    </LinearLayout>
+
+    <com.google.android.material.divider.MaterialDivider
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <!-- 消息列表(单一 RecyclerView,多 view-type) -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/chatMessagesList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="8dp"
+            android:scrollbars="vertical" />
+
+        <!-- 流式光标(仅生成时显示) -->
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:id="@+id/streamingIndicator"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="16dp"
+            android:indeterminate="true"
+            android:visibility="gone"
+            app:indicatorSize="24dp"
+            style="@style/Widget.Material3.CircularProgressIndicator" />
+
+    </FrameLayout>
+
+    <com.google.android.material.divider.MaterialDivider
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <!-- 输入区 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
 
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/promptLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="What would you like me to do?"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="8dp"
             app:startIconDrawable="@drawable/ic_ai"
             style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
 
@@ -51,8 +97,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:inputType="textMultiLine"
-                android:minLines="3"
-                android:maxLines="6"
+                android:minLines="2"
+                android:maxLines="5"
                 android:gravity="top|start"
                 android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -73,6 +119,7 @@
                 app:icon="@drawable/ic_clear"
                 style="@style/Widget.Material3.Button.OutlinedButton" />
 
+            <!-- Send / Stop 切换:text 字段在代码里动态改。 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/executeBtn"
                 android:layout_width="wrap_content"
@@ -83,115 +130,5 @@
         </LinearLayout>
 
     </LinearLayout>
-
-    <com.google.android.material.divider.MaterialDivider
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
-
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/mainScrollView"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="16dp">
-
-            <LinearLayout
-                android:id="@+id/statusCard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingVertical="12dp"
-                android:layout_marginBottom="8dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Status"
-                        android:textAppearance="?attr/textAppearanceBodyLarge" />
-
-                    <com.google.android.material.progressindicator.CircularProgressIndicator
-                        android:id="@+id/progressIndicator"
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:indeterminate="true"
-                        android:visibility="gone"
-                        app:indicatorSize="24dp"
-                        style="@style/Widget.Material3.CircularProgressIndicator" />
-
-                </LinearLayout>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/statusText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Ready to assist you"
-                    android:textIsSelectable="true"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
-
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/fileModificationList"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:nestedScrollingEnabled="false"
-                    android:visibility="gone" />
-
-            </LinearLayout>
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/agentTimelineList"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:nestedScrollingEnabled="false" />
-
-            <com.google.android.material.divider.MaterialDivider
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginVertical="8dp" />
-
-            <LinearLayout
-                android:id="@+id/summaryCard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingVertical="12dp"
-                android:visibility="gone">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Modification Summary"
-                    android:textAppearance="?attr/textAppearanceBodyLarge"
-                    android:layout_marginBottom="8dp" />
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/summaryText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
-
-            </LinearLayout>
-
-        </LinearLayout>
-
-    </androidx.core.widget.NestedScrollView>
 
 </LinearLayout>

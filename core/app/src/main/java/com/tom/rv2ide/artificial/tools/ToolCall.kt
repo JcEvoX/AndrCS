@@ -37,6 +37,27 @@ sealed interface ToolCall {
   ) : ToolCall {
     override val name: String = "write_file"
   }
+
+  data class DeleteFile(
+      override val id: String,
+      val path: String,
+  ) : ToolCall {
+    override val name: String = "delete_file"
+  }
+
+  data class CreateDirectory(
+      override val id: String,
+      val path: String,
+  ) : ToolCall {
+    override val name: String = "create_directory"
+  }
+
+  data class FileInfo(
+      override val id: String,
+      val path: String,
+  ) : ToolCall {
+    override val name: String = "file_info"
+  }
 }
 
 sealed interface ToolResult {

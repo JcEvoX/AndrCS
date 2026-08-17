@@ -34,8 +34,16 @@ import java.net.URL
 import com.tom.rv2ide.artificial.exceptions.*
 import com.tom.rv2ide.artificial.agents.AIAgent
 import com.tom.rv2ide.artificial.agents.AIAgentRegistry
-import com.tom.rv2ide.artificial.secrets.ApiKey
+import com.tom.rv2ide.artificial.agents.AgentEvent
 import com.tom.rv2ide.artificial.agents.ModificationAttempt
+import com.tom.rv2ide.artificial.secrets.ApiKey
+import com.tom.rv2ide.artificial.tools.ToolCall
+import com.tom.rv2ide.artificial.tools.ToolCallParser
+import com.tom.rv2ide.artificial.tools.ToolDefinition
+import com.tom.rv2ide.artificial.tools.ToolResult
+import com.tom.rv2ide.artificial.tools.ToolSchemaJson
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 /*
  * @author Mohammed-baqer-null @ https://github.com/Mohammed-baqer-null
@@ -65,14 +73,11 @@ class OpenAI : AIAgent {
               
               override fun hasValidApiKey(): Boolean {
                   val key = ApiKey.getOpenAIApiKey()
-                  android.util.Log.d("OpenAI", "hasValidApiKey check: ${key != null && key.isNotEmpty()}, key length: ${key?.length ?: 0}")
-                  return key != null && key.isNotEmpty()
+                  return key.isNotBlank() && key.length > 20
               }
               
               override fun getApiKey(): String? {
-                  val key = ApiKey.getOpenAIApiKey()
-                  android.util.Log.d("OpenAI", "getApiKey called, returning key of length: ${key?.length ?: 0}")
-                  return key
+                  return ApiKey.getOpenAIApiKey().takeIf { it.isNotBlank() && it.length > 20 }
               }
           })
       }
@@ -450,6 +455,251 @@ class OpenAI : AIAgent {
   }
 
   override fun isInitialized(): Boolean = apiKey != null
+
+  /**
+   * ReAct 流式 Agent。覆盖 AIAgent 的默认实现,使用 OpenAI 原生 `tool_calls` 字段,
+   * 而不是依赖脆弱的 `"FILE_TO_MODIFY:"` 字符串协议。
+   *
+   * 设计参考 ACSIDE 反编译样本(`afad2351...`)中的 `OpenAiCompatibleMcpAgent.chat`
+   * `Flow<AgentEvent>` 形态与 `WorkspaceTools` 工具调度。仅复用 ReAct 循环与事件流
+   * 的架构思想,不复制反编译源码。
+   *
+   * 不声明 suspend:返回的 Flow 在 collect 时才真正进入协程上下文执行
+   * (withContext / withContext(Dispatchers.IO) 内的 HTTP 调用等)。
+   * 这样 UI 层入口 executeChatStreaming 等非 suspend 函数也能直接调用 chat()
+   * 构造 Flow,交给 lifecycleScope.launch collect。
+   */
+  override fun chat(
+      prompt: String,
+      tools: List<ToolDefinition>,
+      onToolCall: suspend (ToolCall) -> ToolResult,
+      maxIterations: Int,
+  ): Flow<AgentEvent> = flow {
+    val key = apiKey
+        ?: run {
+          emit(AgentEvent.Error("OpenAI service not initialized"))
+          return@flow
+        }
+
+    val messages = JSONArray()
+    messages.put(JSONObject().apply {
+      put("role", "system")
+      put("content", buildSystemPrompt())
+    })
+
+    // 复用现有 conversationHistory,保持多轮对话上下文。
+    conversationHistory.forEach { msg ->
+      messages.put(JSONObject().apply {
+        put("role", msg.role)
+        put("content", msg.content)
+      })
+    }
+
+    messages.put(JSONObject().apply {
+      put("role", "user")
+      put("content", prompt)
+    })
+
+    val toolsJson = ToolSchemaJson.toArray(tools)
+    val hasTools = tools.isNotEmpty()
+    var iteration = 0
+
+    while (iteration < maxIterations) {
+      iteration++
+
+      val responsePair = withContext(Dispatchers.IO) {
+        runCatching { callOpenAIChatAPI(key, messages, toolsJson, hasTools) }
+      }
+      val response = responsePair.getOrNull()
+      if (response == null) {
+        emit(AgentEvent.Error("OpenAI API call failed: ${responsePair.exceptionOrNull()?.message ?: "unknown"}", responsePair.exceptionOrNull()))
+        return@flow
+      }
+
+      val choices = response.optJSONArray("choices")
+      if (choices == null || choices.length() == 0) {
+        emit(AgentEvent.Error("OpenAI returned no choices"))
+        return@flow
+      }
+      val message = choices.getJSONObject(0).getJSONObject("message")
+
+      // 提取 reasoning_content(DeepSeek R1 / Claude thinking / GLM-4.5 等推理模型)。
+      val reasoning = message.optString("reasoning_content", "")
+      if (reasoning.isNotBlank()) emit(AgentEvent.Thinking(reasoning))
+
+      val textContent = message.optString("content", "")
+      if (textContent.isNotBlank()) emit(AgentEvent.TextDelta(textContent))
+
+      // 把 assistant 消息追加到 messages 用于下一轮(保留 tool_calls 字段)。
+      messages.put(message)
+
+      val toolCalls = message.optJSONArray("tool_calls")
+      if (toolCalls == null || toolCalls.length() == 0) {
+        // 没有工具调用,这是最终响应。
+        val usage = response.optJSONObject("usage")
+        emit(
+            AgentEvent.FinalResponse(
+                text = textContent,
+                totalTokens = usage?.optInt("total_tokens", 0) ?: 0,
+                promptTokens = usage?.optInt("prompt_tokens", 0) ?: 0,
+                candidateTokens = usage?.optInt("completion_tokens", 0) ?: 0,
+            ),
+        )
+        // 同步到旧 conversationHistory,保持向后兼容。
+        conversationHistory.add(ConversationMessage("user", prompt))
+        conversationHistory.add(ConversationMessage("assistant", textContent))
+        if (conversationHistory.size > 20) {
+          conversationHistory.removeAt(0)
+          conversationHistory.removeAt(0)
+        }
+        return@flow
+      }
+
+      // 解析并执行每个工具调用,把结果回填到 messages。
+      for (i in 0 until toolCalls.length()) {
+        val tc = toolCalls.getJSONObject(i)
+        val tcId = tc.getString("id")
+        if (tc.optString("type", "function") != "function") continue
+        val function = tc.getJSONObject("function")
+        val toolName = function.getString("name")
+        val argsJson = function.optString("arguments", "{}")
+
+        emit(AgentEvent.ToolCall(id = tcId, name = toolName, argumentsJson = argsJson))
+
+        val parseResult = ToolCallParser.parse(tcId, toolName, argsJson)
+        val toolResult = if (parseResult.isSuccess) {
+          val call = parseResult.getOrThrow()
+          try {
+            onToolCall(call)
+          } catch (e: Exception) {
+            ToolResult.Failure(tcId, "Tool execution error: ${e.message}")
+          }
+        } else {
+          ToolResult.Failure(tcId, "Tool parse error: ${parseResult.exceptionOrNull()?.message}")
+        }
+
+        val resultText = when (toolResult) {
+          is ToolResult.Success -> toolResult.output
+          is ToolResult.Rejected -> "REJECTED: ${toolResult.reason}"
+          is ToolResult.Failure -> "FAILURE: ${toolResult.reason}"
+        }
+        emit(
+            AgentEvent.ToolResult(
+                callId = tcId,
+                toolName = toolName,
+                output = resultText,
+                successful = toolResult is ToolResult.Success,
+            ),
+        )
+
+        messages.put(JSONObject().apply {
+          put("role", "tool")
+          put("tool_call_id", tcId)
+          put("content", resultText)
+        })
+
+        // 记录写操作到 modificationHistory,保持与旧 generateCode 路径一致的撤销能力。
+        if (toolResult is ToolResult.Success && parseResult.isSuccess) {
+          val call = parseResult.getOrThrow()
+          if (call is ToolCall.WriteFile) {
+            // previousContent 此处无法精确捕获,因为 WorkspaceToolExecutor 内部已落地。
+            // 传 null 仍可让撤销链工作(空 → 删除)。
+            recordModification(call.path, null, call.content, success = true)
+          }
+        }
+      }
+      // 循环回到 while 头部,把 messages 发给模型继续。
+    }
+
+    emit(AgentEvent.Error("Reached max iterations ($maxIterations) without final response"))
+  }
+
+  private fun buildSystemPrompt(): String = buildString {
+    append(writingRules.useThis())
+    append("\n\n")
+    append("=== PROJECT STRUCTURE (use ONLY these paths) ===\n")
+    if (projectTreeResult != null) {
+      append(projectTreeResult!!.tree)
+      append("\nCRITICAL: Do NOT fabricate paths like '/storage/emulated/0/project'.\n")
+    } else {
+      append("(no project loaded)\n")
+    }
+  }
+
+  /**
+   * OpenAI Chat Completions 调用,支持可选的 `tools` 字段。返回完整 JSON 响应。
+   * 抛出与 [callOpenAIAPI] 相同的异常类型,供 [chat] 在调用方包装为 AgentEvent.Error。
+   */
+  private fun callOpenAIChatAPI(
+      apiKey: String,
+      messages: JSONArray,
+      toolsJson: JSONArray,
+      hasTools: Boolean,
+  ): JSONObject {
+    val url = URL("https://api.openai.com/v1/chat/completions")
+    val connection = url.openConnection() as HttpURLConnection
+    try {
+      connection.requestMethod = "POST"
+      connection.setRequestProperty("Content-Type", "application/json")
+      connection.setRequestProperty("Authorization", "Bearer $apiKey")
+      connection.doOutput = true
+      connection.connectTimeout = 30000
+      connection.readTimeout = 120000
+
+      val requestBody = JSONObject().apply {
+        put("model", selectedModel)
+        put("messages", messages)
+        put("temperature", 0.7)
+        put("max_tokens", 4096)
+        if (hasTools) {
+          put("tools", toolsJson)
+          put("tool_choice", "auto")
+        }
+      }
+
+      connection.outputStream.use { os ->
+        os.write(requestBody.toString().toByteArray())
+      }
+
+      val responseCode = connection.responseCode
+      if (responseCode != HttpURLConnection.HTTP_OK) {
+        val errorStream = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+        throw classifyError(responseCode, errorStream)
+      }
+
+      val responseBody = connection.inputStream.bufferedReader().readText()
+      return JSONObject(responseBody)
+    } finally {
+      connection.disconnect()
+    }
+  }
+
+  /** 把 HTTP 错误响应分类成项目自定义异常,沿用 [callOpenAIAPI] 的分类规则。 */
+  private fun classifyError(responseCode: Int, errorStream: String): Exception {
+    return try {
+      val errorJson = JSONObject(errorStream)
+      val errorObj = errorJson.optJSONObject("error")
+      val errorMessage = errorObj?.optString("message") ?: errorStream
+      val errorType = errorObj?.optString("type") ?: ""
+      val errorCode = errorObj?.optString("code") ?: ""
+      when {
+        responseCode == 429 || errorType.contains("rate_limit") || errorCode.contains("rate_limit") ->
+          RateLimitException("OpenAI rate limit exceeded: $errorMessage")
+        errorType.contains("insufficient_quota") || errorMessage.contains("quota") || errorMessage.contains("billing") ->
+          QuotaExceededException("OpenAI quota exceeded: $errorMessage")
+        errorType.contains("invalid_api_key") || errorCode.contains("invalid_api_key") ->
+          InvalidApiKeyException("Invalid OpenAI API key: $errorMessage")
+        responseCode == 401 ->
+          InvalidApiKeyException("OpenAI authentication failed: $errorMessage")
+        else -> Exception("OpenAI API error ($responseCode) - Type: $errorType, Code: $errorCode, Message: $errorMessage")
+      }
+    } catch (e: RateLimitException) { e }
+    catch (e: QuotaExceededException) { e }
+    catch (e: InvalidApiKeyException) { e }
+    catch (e: Exception) {
+      Exception("OpenAI API error ($responseCode): $errorStream")
+    }
+  }
 }
 
 data class FileModification(

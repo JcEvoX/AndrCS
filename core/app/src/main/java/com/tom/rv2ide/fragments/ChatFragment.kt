@@ -13,7 +13,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *   along with AndroidCodeStudio.  If not, see <https://www.gnu.org/licenses/>.
-*/
+ */
 
 package com.tom.rv2ide.fragments
 
@@ -24,67 +24,46 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textview.MaterialTextView
-import androidx.recyclerview.widget.RecyclerView
-import android.widget.LinearLayout
-import android.content.SharedPreferences
 import com.tom.rv2ide.R
-import com.tom.rv2ide.adapters.AgentTimelineAdapter
-import com.tom.rv2ide.adapters.FileModificationAdapter
+import com.tom.rv2ide.adapters.ChatMessage
+import com.tom.rv2ide.adapters.ChatMessageAdapter
 import com.tom.rv2ide.artificial.agents.AIAgentManager
-import com.tom.rv2ide.managers.CodeCompletionManager
-import com.tom.rv2ide.handlers.AIRequestHandler
+import com.tom.rv2ide.artificial.agents.AgentEvent
 import com.tom.rv2ide.utils.ProjectHelper.getProjectRoot
-import com.tom.rv2ide.activities.editor.EditorHandlerActivity
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import java.io.File
 
 /**
- * @author Mohammed-baqer-null @ https://github.com/Mohammed-baqer-null
+ * 流式 Agent 聊天 Fragment。直接消费 [AIAgentManager.executeChatStreaming] 返回的
+ * `Flow<AgentEvent>`,把事件映射到 [ChatMessageAdapter] 的多 view-type 行:
+ * - AgentEvent.Thinking → REASONING 行(可折叠,增量追加)
+ * - AgentEvent.TextDelta → ASSISTANT 行(增量追加,流式光标)
+ * - AgentEvent.ToolCall → TOOL_CALL 行(可折叠 args)
+ * - AgentEvent.ToolResult → 更新对应 TOOL_CALL 行的结果区
+ * - AgentEvent.FinalResponse → 完成最后一行 ASSISTANT 文本,隐藏光标
+ * - AgentEvent.Error → ERROR 行
+ *
+ * Send 按钮在流式生成期间切换为 Stop,点击取消当前协程即中断生成。
  */
-
 class ChatFragment : Fragment() {
 
     private lateinit var aiAgent: AIAgentManager
     private lateinit var promptInput: TextInputEditText
     private lateinit var executeBtn: MaterialButton
     private lateinit var clearBtn: MaterialButton
-    private lateinit var statusText: MaterialTextView
-    private lateinit var summaryText: MaterialTextView
-    private lateinit var progressIndicator: CircularProgressIndicator
-    private lateinit var fileModificationList: RecyclerView
-    private lateinit var agentTimelineList: RecyclerView
-    private lateinit var summaryCard: LinearLayout
-    private lateinit var fileModificationAdapter: FileModificationAdapter
-    private lateinit var agentTimelineAdapter: AgentTimelineAdapter
-    
-    private lateinit var codeCompletionManager: CodeCompletionManager
-    private lateinit var aiRequestHandler: AIRequestHandler
-    
-    private var typingJob: Job? = null
-    private var fileMonitorJob: Job? = null
-    private var completionStateMonitorJob: Job? = null
-    private var lastMonitoredFile: File? = null
-    private var isSettingUpCompletion = false
-    
+    private lateinit var streamingIndicator: CircularProgressIndicator
+    private lateinit var chatMessagesList: RecyclerView
+    private lateinit var chatAdapter: ChatMessageAdapter
+
+    private var streamingJob: Job? = null
+
     private val userRootProject = getProjectRoot().absolutePath.toString()
-    
-    private val sharedPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
-        if (key == "code_completion_enabled") {
-            val isEnabled = prefs.getBoolean(key, true)
-            android.util.Log.d("ChatFragment", "Completion preference changed: $isEnabled")
-            
-            lifecycleScope.launch {
-                handleCompletionStateChange(isEnabled)
-            }
-        }
-    }
 
     companion object {
         fun newInstance(aiAgent: AIAgentManager): ChatFragment {
@@ -104,411 +83,219 @@ class ChatFragment : Fragment() {
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View? {
         return inflater.inflate(R.layout.fragment_chat, container, false)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        
         initializeViews(view)
         setupRecyclerView()
-        setupManagers()
         setupListeners()
         loadProject()
-        registerPreferenceListener()
-    }
-    
-    override fun onResume() {
-        super.onResume()
-        startFileMonitoring()
-        startCompletionStateMonitoring()
-    }
-    
-    override fun onPause() {
-        super.onPause()
-        stopFileMonitoring()
-        stopCompletionStateMonitoring()
     }
 
     private fun initializeViews(view: View) {
         promptInput = view.findViewById(R.id.anyText)
         executeBtn = view.findViewById(R.id.executeBtn)
         clearBtn = view.findViewById(R.id.clearBtn)
-        statusText = view.findViewById(R.id.statusText)
-        summaryText = view.findViewById(R.id.summaryText)
-        progressIndicator = view.findViewById(R.id.progressIndicator)
-        fileModificationList = view.findViewById(R.id.fileModificationList)
-        agentTimelineList = view.findViewById(R.id.agentTimelineList)
-        summaryCard = view.findViewById(R.id.summaryCard)
+        streamingIndicator = view.findViewById(R.id.streamingIndicator)
+        chatMessagesList = view.findViewById(R.id.chatMessagesList)
     }
 
     private fun setupRecyclerView() {
-        fileModificationAdapter = FileModificationAdapter()
-        fileModificationList.apply {
+        chatAdapter = ChatMessageAdapter()
+        chatMessagesList.apply {
             layoutManager = LinearLayoutManager(requireContext())
-            adapter = fileModificationAdapter
-            isNestedScrollingEnabled = false
+            adapter = chatAdapter
+            // 新消息追加时自动滚动到底部。
+            chatAdapter.registerAdapterDataObserver(
+                object : RecyclerView.AdapterDataObserver() {
+                    override fun onItemRangeInserted(positionStart: Int, itemCount: Int) {
+                        super.onItemRangeInserted(positionStart, itemCount)
+                        chatMessagesList.smoothScrollToPosition(chatAdapter.itemCount - 1)
+                    }
+                },
+            )
         }
-        
-        fileModificationAdapter.setOnItemClickListener { fileName ->
-            openFileInEditor(fileName)
-        }
-
-        agentTimelineAdapter = AgentTimelineAdapter()
-        agentTimelineList.apply {
-            layoutManager = LinearLayoutManager(requireContext())
-            adapter = agentTimelineAdapter
-            isNestedScrollingEnabled = false
-        }
-    }
-
-    private fun setupManagers() {
-        codeCompletionManager = CodeCompletionManager.getInstance(
-            requireContext(),
-            lifecycleScope,
-            aiAgent
-        )
-        
-        aiRequestHandler = AIRequestHandler(
-            lifecycleScope,
-            aiAgent,
-            statusText,
-            summaryText,
-            progressIndicator,
-            executeBtn,
-            fileModificationList,
-            fileModificationAdapter,
-            agentTimelineList,
-            agentTimelineAdapter,
-            summaryCard,
-            onFileOpen = { fileName ->
-                openFileInEditor(fileName)
-            },
-            onTypeText = { text, delay -> typeText(text, delay) },
-            getCurrentFile = { getCurrentFile() },
-            refreshEditor = { refreshCurrentEditor() }
-        )
     }
 
     private fun setupListeners() {
         executeBtn.setOnClickListener {
-            val userRequest = promptInput.text.toString()
-            
+            // 流式生成中点击 = Stop。
+            if (streamingJob?.isActive == true) {
+                streamingJob?.cancel()
+                setStreamingState(false)
+                return@setOnClickListener
+            }
+
+            val userRequest = promptInput.text?.toString().orEmpty()
             if (userRequest.isBlank()) {
                 showSnackbar("Please enter a request")
                 return@setOnClickListener
             }
-            
-            codeCompletionManager.clearSuggestion()
-            aiRequestHandler.execute(userRequest)
+
+            startStreaming(userRequest)
         }
-    
+
         clearBtn.setOnClickListener {
             clearConversation()
         }
     }
-    
-    private fun registerPreferenceListener() {
-        val prefs = requireContext().getSharedPreferences("ai_preferences", android.content.Context.MODE_PRIVATE)
-        prefs.registerOnSharedPreferenceChangeListener(sharedPrefsListener)
-    }
-    
-    private fun unregisterPreferenceListener() {
-        val prefs = requireContext().getSharedPreferences("ai_preferences", android.content.Context.MODE_PRIVATE)
-        prefs.unregisterOnSharedPreferenceChangeListener(sharedPrefsListener)
-    }
-    
-    private suspend fun handleCompletionStateChange(enabled: Boolean) {
-        android.util.Log.d("ChatFragment", "handleCompletionStateChange: $enabled")
-        
-        if (enabled) {
-            delay(200)
-            val editor = getCurrentEditor()
-            val suggestionView = getCurrentSuggestionView()
-            
-            if (editor != null && suggestionView != null) {
-                android.util.Log.d("ChatFragment", "Re-enabling completion for current file")
-                setupCodeCompletionForCurrentFile()
+
+    private fun startStreaming(userRequest: String) {
+        // 追加用户消息行。
+        chatAdapter.add(
+            ChatMessage(
+                id = "user-${System.currentTimeMillis()}",
+                type = ChatMessage.Type.USER,
+                text = userRequest,
+            ),
+        )
+
+        // 预追加一个空 ASSISTANT 行,后续 TextDelta 增量填充它(流式光标效果)。
+        chatAdapter.add(
+            ChatMessage(
+                id = "assistant-${System.currentTimeMillis()}",
+                type = ChatMessage.Type.ASSISTANT,
+                text = "",
+            ),
+        )
+
+        setStreamingState(true)
+
+        streamingJob = lifecycleScope.launch {
+            try {
+                aiAgent.executeChatStreaming(userRequest).collect { event -> handleAgentEvent(event) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 用户主动 Stop,正常退出。
+            } catch (e: Exception) {
+                chatAdapter.add(
+                    ChatMessage(
+                        id = "error-${System.currentTimeMillis()}",
+                        type = ChatMessage.Type.ERROR,
+                        text = e.message ?: "Unknown error",
+                    ),
+                )
+            } finally {
+                setStreamingState(false)
             }
-        } else {
-            android.util.Log.d("ChatFragment", "Disabling completion")
-            codeCompletionManager.cleanup()
         }
     }
-    
-    private fun startCompletionStateMonitoring() {
-        stopCompletionStateMonitoring()
-        
-        completionStateMonitorJob = lifecycleScope.launch {
-            var lastKnownState = requireContext().getSharedPreferences("ai_preferences", android.content.Context.MODE_PRIVATE)
-                .getBoolean("code_completion_enabled", true)
-            
-            while (true) {
-                delay(200)
-                
-                val currentState = requireContext().getSharedPreferences("ai_preferences", android.content.Context.MODE_PRIVATE)
-                    .getBoolean("code_completion_enabled", true)
-                
-                if (currentState != lastKnownState) {
-                    android.util.Log.d("ChatFragment", "State change detected in monitor: $lastKnownState -> $currentState")
-                    lastKnownState = currentState
-                    handleCompletionStateChange(currentState)
+
+    private fun handleAgentEvent(event: AgentEvent) {
+        when (event) {
+            is AgentEvent.Thinking -> {
+                // 若最后一条不是 REASONING,新加一条;否则增量追加。
+                val pos = chatAdapter.appendReasoningToLast(event.delta)
+                if (pos < 0) {
+                    chatAdapter.add(
+                        ChatMessage(
+                            id = "reasoning-${System.currentTimeMillis()}",
+                            type = ChatMessage.Type.REASONING,
+                            reasoning = event.delta,
+                        ),
+                    )
                 }
             }
+            is AgentEvent.TextDelta -> {
+                // 追加到最后一条 ASSISTANT 行。
+                val pos = chatAdapter.appendTextToLast(event.delta)
+                if (pos < 0) {
+                    // 极端情况:没有预追加的 ASSISTANT 行,补一条。
+                    chatAdapter.add(
+                        ChatMessage(
+                            id = "assistant-${System.currentTimeMillis()}",
+                            type = ChatMessage.Type.ASSISTANT,
+                            text = event.delta,
+                        ),
+                    )
+                }
+            }
+            is AgentEvent.ToolCall -> {
+                chatAdapter.add(
+                    ChatMessage(
+                        id = event.id,
+                        type = ChatMessage.Type.TOOL_CALL,
+                        toolName = event.name,
+                        toolArguments = event.argumentsJson,
+                    ),
+                )
+            }
+            is AgentEvent.ToolResult -> {
+                chatAdapter.setToolResult(event.callId, event.output, event.successful)
+            }
+            is AgentEvent.FinalResponse -> {
+                // 把 FinalResponse 的完整 text 写入最后一条 ASSISTANT(覆盖增量)。
+                if (event.text.isNotBlank()) {
+                    chatAdapter.appendTextToLast("") // 触发 notify 刷新
+                }
+                setStreamingState(false)
+            }
+            is AgentEvent.Error -> {
+                chatAdapter.add(
+                    ChatMessage(
+                        id = "error-${System.currentTimeMillis()}",
+                        type = ChatMessage.Type.ERROR,
+                        text = event.message,
+                    ),
+                )
+                setStreamingState(false)
+            }
         }
     }
-    
-    private fun stopCompletionStateMonitoring() {
-        completionStateMonitorJob?.cancel()
-        completionStateMonitorJob = null
+
+    private fun setStreamingState(streaming: Boolean) {
+        if (streaming) {
+            streamingIndicator.visibility = View.VISIBLE
+            executeBtn.text = "Stop"
+            // 流式期间不显示图标,纯文字+左侧进度环已足够区分。
+            executeBtn.icon = null
+        } else {
+            streamingIndicator.visibility = View.GONE
+            executeBtn.text = "Send"
+            executeBtn.icon = context?.getDrawable(R.drawable.ic_send)
+            streamingJob = null
+        }
     }
 
     private fun loadProject() {
         lifecycleScope.launch {
             try {
                 val success = aiAgent.setProjectRoot(userRootProject)
-                
-                if (success) {
-                    statusText.text = "Project loaded successfully"
-                } else {
-                    statusText.text = "Failed to load project"
+                if (!success) {
+                    showSnackbar("Failed to load project")
                 }
             } catch (e: Exception) {
-                statusText.text = "Error loading project: ${e.message}"
-            }
-        }
-    }
-    
-    private fun startFileMonitoring() {
-        stopFileMonitoring()
-        
-        fileMonitorJob = lifecycleScope.launch {
-            while (true) {
-                delay(500)
-                
-                if (isSettingUpCompletion) {
-                    continue
-                }
-                
-                val prefs = requireContext().getSharedPreferences("ai_preferences", android.content.Context.MODE_PRIVATE)
-                val isEnabled = prefs.getBoolean("code_completion_enabled", true)
-                
-                if (!isEnabled) {
-                    continue
-                }
-                
-                val currentFile = getCurrentFile()
-                
-                if (currentFile != null && currentFile != lastMonitoredFile) {
-                    android.util.Log.d("ChatFragment", "File changed detected: ${currentFile.name}")
-                    lastMonitoredFile = currentFile
-                    setupCodeCompletionForCurrentFile()
-                }
-            }
-        }
-    }
-    
-    private fun stopFileMonitoring() {
-        fileMonitorJob?.cancel()
-        fileMonitorJob = null
-    }
-    
-    private fun setupCodeCompletionForCurrentFile() {
-        if (isSettingUpCompletion) {
-            android.util.Log.d("ChatFragment", "Already setting up, skipping")
-            return
-        }
-        
-        val prefs = requireContext().getSharedPreferences("ai_preferences", android.content.Context.MODE_PRIVATE)
-        val isEnabled = prefs.getBoolean("code_completion_enabled", true)
-        
-        if (!isEnabled) {
-            android.util.Log.d("ChatFragment", "Code completion is disabled, skipping setup")
-            return
-        }
-        
-        isSettingUpCompletion = true
-        
-        lifecycleScope.launch {
-            delay(200)
-            
-            val editor = getCurrentEditor()
-            val suggestionView = getCurrentSuggestionView()
-            
-            if (editor != null && suggestionView != null) {
-                android.util.Log.d("ChatFragment", "Setting up code completion")
-                codeCompletionManager.setup(
-                    editor,
-                    suggestionView,
-                    onReady = {
-                        android.util.Log.d("ChatFragment", "✦ Code completion ready!")
-                        isSettingUpCompletion = false
-                    },
-                    onError = { e ->
-                        android.util.Log.e("ChatFragment", "✗ Completion setup failed: ${e.message}", e)
-                        isSettingUpCompletion = false
-                    }
-                )
-            } else {
-                android.util.Log.w("ChatFragment", "Editor or SuggestionView is null, cannot setup")
-                isSettingUpCompletion = false
-            }
-        }
-    }
-    
-    fun getCodeCompletionManager(): CodeCompletionManager {
-        return codeCompletionManager
-    }
-
-    private fun openFileInEditor(fileName: String) {
-        if (userRootProject.isBlank()) {
-            showSnackbar("Project path not set")
-            return
-        }
-        
-        lifecycleScope.launch {
-            try {
-                val file = findFileInProject(File(userRootProject), fileName)
-                if (file == null) {
-                    showSnackbar("File not found: $fileName")
-                    return@launch
-                }
-                
-                val activity = requireActivity()
-                if (activity is EditorHandlerActivity) {
-                    activity.openFile(file)
-                    showSnackbar("Opened: ${file.name}")
-                    
-                    lastMonitoredFile = file
-                    delay(500)
-                    setupCodeCompletionForCurrentFile()
-                }
-            } catch (e: Exception) {
-                showSnackbar("Error opening file: ${e.message}")
-            }
-        }
-    }
-    
-    private fun findFileInProject(projectRoot: File, fileName: String): File? {
-        if (!projectRoot.exists() || !projectRoot.isDirectory) {
-            return null
-        }
-        
-        return projectRoot.walkTopDown().firstOrNull { 
-            it.isFile && it.name == fileName 
-        }
-    }
-
-    private fun typeText(text: String, delayMs: Long = 10L) {
-        typingJob?.cancel()
-        typingJob = lifecycleScope.launch {
-            try {
-                val editor = getCurrentEditor() ?: return@launch
-                val lines = text.lines()
-                val currentText = StringBuilder()
-                
-                for (line in lines) {
-                    val words = line.split(" ")
-                    for (i in words.indices) {
-                        currentText.append(words[i])
-                        if (i < words.size - 1) {
-                            currentText.append(" ")
-                        }
-                        editor.setText(currentText.toString())
-                        delay(delayMs)
-                    }
-                    currentText.append("\n")
-                    editor.setText(currentText.toString())
-                }
-            } catch (e: Exception) {
+                showSnackbar("Error loading project: ${e.message}")
             }
         }
     }
 
-    fun clearConversation() {
-        lifecycleScope.launch {
-            try {
-                typingJob?.cancel()
-                codeCompletionManager.clearSuggestion()
-                aiAgent.clearConversation()
-                
-                promptInput.text?.clear()
-                statusText.text = "Conversation cleared. Ready for new request."
-                fileModificationList.visibility = View.GONE
-                summaryCard.visibility = View.GONE
-                fileModificationAdapter.clear()
-                
-                showSnackbar("Conversation cleared")
-            } catch (e: Exception) {
-                showSnackbar("Error clearing: ${e.message}")
-            }
-        }
-    }
-
-    private fun getCurrentEditor() = try {
-        val activity = requireActivity()
-        if (activity is EditorHandlerActivity) {
-            activity.getCurrentEditor()?.editor
-        } else {
-            null
-        }
-    } catch (e: Exception) {
-        null
-    }
-
-    private fun getCurrentFile() = try {
-        val activity = requireActivity()
-        if (activity is EditorHandlerActivity) {
-            activity.getCurrentEditor()?.file
-        } else null
-    } catch (e: Exception) {
-        null
-    }
-    
-    private fun getCurrentSuggestionView() = try {
-        val activity = requireActivity()
-        if (activity is EditorHandlerActivity) {
-            activity.getCurrentEditor()?.suggestionView
-        } else {
-            null
-        }
-    } catch (e: Exception) {
-        null
-    }
-
-    private fun refreshCurrentEditor() {
-        try {
-            val activity = requireActivity()
-            if (activity is EditorHandlerActivity) {
-                val currentEditor = activity.getCurrentEditor()
-                val file = currentEditor?.file
-                val newContent = file?.readText()
-                val editorText = currentEditor?.editor?.text
-
-                if (editorText != null && newContent != null) {
-                    editorText.replace(0, editorText.length, newContent)
-                }
-            }
-        } catch (e: Exception) {
-        }
+    private fun clearConversation() {
+        streamingJob?.cancel()
+        aiAgent.clearConversation()
+        chatAdapter.clear()
+        promptInput.text?.clear()
+        setStreamingState(false)
+        showSnackbar("Conversation cleared")
     }
 
     private fun showSnackbar(message: String) {
-        val anchorView = activity?.findViewById<View>(android.R.id.content) 
-            ?: view 
-            ?: return
-        
+        val anchorView = activity?.findViewById<View>(android.R.id.content) ?: view ?: return
         Snackbar.make(anchorView, message, Snackbar.LENGTH_SHORT).show()
     }
-    
+
+    /**
+     * 旧 [ChatFragment] 通过 [CodeCompletionManager] 提供行内代码补全。新的流式 chat UI
+     * 暂未集成补全(它依赖编辑器轮询),返回 null 让 [AIPreferencesFragment] 优雅降级:
+     * 不显示补全相关偏好项。后续可在流式 UI 之上重新引入。
+     */
+    fun getCodeCompletionManager(): com.tom.rv2ide.managers.CodeCompletionManager? = null
+
     override fun onDestroyView() {
-        typingJob?.cancel()
-        fileMonitorJob?.cancel()
-        completionStateMonitorJob?.cancel()
-        aiRequestHandler.cancel()
-        unregisterPreferenceListener()
+        streamingJob?.cancel()
         super.onDestroyView()
     }
 }

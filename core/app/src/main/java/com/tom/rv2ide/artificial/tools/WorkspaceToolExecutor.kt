@@ -12,7 +12,7 @@ class WorkspaceToolExecutor(
     private val permissionManager: AIPermissionManager,
     private val fileWriter: AIFileWriter,
     private val workspaceRoot: () -> File?,
-    private val requestApproval: suspend (ToolCall.WriteFile) -> Boolean,
+    private val requestApproval: suspend (path: String) -> Boolean,
 ) {
 
   suspend fun execute(call: ToolCall): ToolResult =
@@ -20,7 +20,10 @@ class WorkspaceToolExecutor(
         is ToolCall.ListFiles -> executeListFiles(call)
         is ToolCall.ReadFile -> executeReadFile(call)
         is ToolCall.SearchFiles -> executeSearchFiles(call)
+        is ToolCall.FileInfo -> executeFileInfo(call)
         is ToolCall.WriteFile -> executeWrite(call)
+        is ToolCall.DeleteFile -> executeDeleteFile(call)
+        is ToolCall.CreateDirectory -> executeCreateDirectory(call)
       }
 
   private fun executeListFiles(call: ToolCall.ListFiles): ToolResult {
@@ -85,6 +88,22 @@ class WorkspaceToolExecutor(
     return ToolResult.Success(call.id, matches.take(MAX_SEARCH_RESULTS).joinToString("\n").ifEmpty { "(no matches)" })
   }
 
+  private fun executeFileInfo(call: ToolCall.FileInfo): ToolResult {
+    val file = resolveWorkspacePath(call.path)
+        ?: return ToolResult.Rejected(call.id, "Path is outside the opened project")
+    val relative = file.relativeTo(workspaceRoot()!!.canonicalFile).path
+    val sb = StringBuilder()
+    sb.append("path: $relative\n")
+    sb.append("exists: ${file.exists()}\n")
+    if (file.exists()) {
+      sb.append("type: ${if (file.isDirectory) "directory" else "file"}\n")
+      if (file.isFile) sb.append("size: ${file.length()} bytes\n")
+      sb.append("lastModified: ${file.lastModified()} (${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(file.lastModified()))})\n")
+      if (file.isFile) sb.append("readable: ${file.canRead()}\n")
+    }
+    return ToolResult.Success(call.id, sb.toString().trimEnd())
+  }
+
   private suspend fun executeWrite(call: ToolCall.WriteFile): ToolResult {
     if (!permissionManager.isFileWriteEnabled()) {
       return ToolResult.Rejected(call.id, "AI file writing is disabled")
@@ -92,7 +111,7 @@ class WorkspaceToolExecutor(
     if (!permissionManager.isPathAllowed(call.path)) {
       return ToolResult.Rejected(call.id, "Path is outside the opened project")
     }
-    if (permissionManager.requiresConfirmation() && !requestApproval(call)) {
+    if (permissionManager.requiresConfirmation() && !requestApproval(call.path)) {
       return ToolResult.Rejected(call.id, "File write was denied")
     }
 
@@ -105,6 +124,45 @@ class WorkspaceToolExecutor(
           )
       is FileWriteResult.PermissionDenied -> ToolResult.Rejected(call.id, result.reason)
       is FileWriteResult.Error -> ToolResult.Failure(call.id, result.message)
+    }
+  }
+
+  private suspend fun executeDeleteFile(call: ToolCall.DeleteFile): ToolResult {
+    if (!permissionManager.isFileWriteEnabled()) {
+      return ToolResult.Rejected(call.id, "AI file modification is disabled")
+    }
+    val file = resolveWorkspacePath(call.path)
+        ?: return ToolResult.Rejected(call.id, "Path is outside the opened project")
+    if (!file.exists()) return ToolResult.Failure(call.id, "File does not exist")
+    if (file.isDirectory) return ToolResult.Rejected(call.id, "Path points to a directory; delete_file supports files only")
+    if (isSensitive(file)) return ToolResult.Rejected(call.id, "File is excluded from AI access")
+    if (permissionManager.requiresConfirmation() && !requestApproval(call.path)) {
+      return ToolResult.Rejected(call.id, "File deletion was denied")
+    }
+    return try {
+      if (file.delete()) ToolResult.Success(call.id, "Deleted ${file.name}")
+      else ToolResult.Failure(call.id, "delete() returned false")
+    } catch (error: Exception) {
+      ToolResult.Failure(call.id, "Unable to delete: ${error.message}")
+    }
+  }
+
+  private suspend fun executeCreateDirectory(call: ToolCall.CreateDirectory): ToolResult {
+    if (!permissionManager.isFileWriteEnabled()) {
+      return ToolResult.Rejected(call.id, "AI file modification is disabled")
+    }
+    val dir = resolveWorkspacePath(call.path)
+        ?: return ToolResult.Rejected(call.id, "Path is outside the opened project")
+    if (dir.exists() && dir.isDirectory) return ToolResult.Success(call.id, "Directory already exists")
+    if (dir.exists() && dir.isFile) return ToolResult.Rejected(call.id, "A file already exists at this path")
+    if (permissionManager.requiresConfirmation() && !requestApproval(call.path)) {
+      return ToolResult.Rejected(call.id, "Directory creation was denied")
+    }
+    return try {
+      if (dir.mkdirs()) ToolResult.Success(call.id, "Created ${dir.relativeTo(workspaceRoot()!!.canonicalFile).path}")
+      else ToolResult.Failure(call.id, "mkdirs() returned false")
+    } catch (error: Exception) {
+      ToolResult.Failure(call.id, "Unable to create directory: ${error.message}")
     }
   }
 
