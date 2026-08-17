@@ -36,6 +36,7 @@ import com.tom.rv2ide.artificial.agents.AIAgent
 import com.tom.rv2ide.artificial.agents.AIAgentRegistry
 import com.tom.rv2ide.artificial.agents.AgentEvent
 import com.tom.rv2ide.artificial.agents.ModificationAttempt
+import com.tom.rv2ide.artificial.secrets.ApiKey
 import com.tom.rv2ide.artificial.tools.ToolCall
 import com.tom.rv2ide.artificial.tools.ToolCallParser
 import com.tom.rv2ide.artificial.tools.ToolDefinition
@@ -72,14 +73,11 @@ class OpenAI : AIAgent {
               
               override fun hasValidApiKey(): Boolean {
                   val key = ApiKey.getOpenAIApiKey()
-                  android.util.Log.d("OpenAI", "hasValidApiKey check: ${key != null && key.isNotEmpty()}, key length: ${key?.length ?: 0}")
-                  return key != null && key.isNotEmpty()
+                  return key.isNotBlank() && key.length > 20
               }
               
               override fun getApiKey(): String? {
-                  val key = ApiKey.getOpenAIApiKey()
-                  android.util.Log.d("OpenAI", "getApiKey called, returning key of length: ${key?.length ?: 0}")
-                  return key
+                  return ApiKey.getOpenAIApiKey().takeIf { it.isNotBlank() && it.length > 20 }
               }
           })
       }
