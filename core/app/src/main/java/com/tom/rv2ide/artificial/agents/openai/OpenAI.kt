@@ -463,8 +463,13 @@ class OpenAI : AIAgent {
    * 设计参考 ACSIDE 反编译样本(`afad2351...`)中的 `OpenAiCompatibleMcpAgent.chat`
    * `Flow<AgentEvent>` 形态与 `WorkspaceTools` 工具调度。仅复用 ReAct 循环与事件流
    * 的架构思想,不复制反编译源码。
+   *
+   * 不声明 suspend:返回的 Flow 在 collect 时才真正进入协程上下文执行
+   * (withContext / withContext(Dispatchers.IO) 内的 HTTP 调用等)。
+   * 这样 UI 层入口 executeChatStreaming 等非 suspend 函数也能直接调用 chat()
+   * 构造 Flow,交给 lifecycleScope.launch collect。
    */
-  override suspend fun chat(
+  override fun chat(
       prompt: String,
       tools: List<ToolDefinition>,
       onToolCall: suspend (ToolCall) -> ToolResult,

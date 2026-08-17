@@ -53,8 +53,13 @@ interface AIAgent {
      * 对话历史并继续下一轮,直到模型给出最终回答或达到 [maxIterations]。
      *
      * 默认实现回退到 [generateCode],provider 可按需覆盖以提供原生 tool_calls 支持。
+     *
+     * 注意:chat() 本身不声明 suspend —— 返回的 Flow 在 collect 时才在协程上下文里执行
+     * suspend 逻辑(如 [generateCode]、withContext、网络请求)。这样非 suspend 的
+     * 入口函数(比如 AIAgentManager.executeChatStreaming)也能直接调用 chat() 返回
+     * Flow,再由 UI 侧 lifecycleScope 调 collect。
      */
-    suspend fun chat(
+    fun chat(
         prompt: String,
         tools: List<ToolDefinition> = emptyList(),
         onToolCall: suspend (com.tom.rv2ide.artificial.tools.ToolCall) -> com.tom.rv2ide.artificial.tools.ToolResult = { _ ->
