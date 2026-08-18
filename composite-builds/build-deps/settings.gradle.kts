@@ -52,6 +52,7 @@ include(
   ":appintro",
   ":google-java-format",
   ":javac",
+  ":jdk-compiler",
   ":logback-core",
 )
 
