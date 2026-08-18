@@ -193,12 +193,12 @@ class ChatFragment : Fragment() {
                             is AgentEvent.ToolCall -> {
                                 val tc = event.call
                                 val item = ToolCallItem(
-                                    id = tc.name + "_" + System.currentTimeMillis(),
+                                    id = tc.id + "_" + System.currentTimeMillis(),
                                     name = when (tc) {
-                                        is ToolCall.WriteFile -> "write ${File(tc.path).name}"
-                                        is ToolCall.ReadFile -> "read ${File(tc.path).name}"
-                                        is ToolCall.ListFiles -> "list ${tc.path}"
-                                        is ToolCall.SearchFiles -> "search ${tc.pattern}"
+                                        is com.tom.rv2ide.artificial.tools.ToolCall.WriteFile -> "write ${File(tc.path).name}"
+                                        is com.tom.rv2ide.artificial.tools.ToolCall.ReadFile -> "read ${File(tc.path).name}"
+                                        is com.tom.rv2ide.artificial.tools.ToolCall.ListFiles -> "list ${tc.path}"
+                                        is com.tom.rv2ide.artificial.tools.ToolCall.SearchFiles -> "search ${tc.query}"
                                         else -> tc.name
                                     },
                                     arguments = "",
@@ -206,12 +206,7 @@ class ChatFragment : Fragment() {
                                 updateAgentMessage(agentMsg.id) { it.addToolCall(item) }
                             }
                             is AgentEvent.ToolResult -> {
-                                val resultId = when (event.result) {
-                                    is ToolResult.Success -> event.result.toolName
-                                    is ToolResult.Failure -> event.result.toolName
-                                    is ToolResult.Rejected -> event.result.toolName
-                                    else -> "unknown"
-                                }
+                                val resultId = event.result.callId
                                 val resultText = when (event.result) {
                                     is ToolResult.Success -> event.result.output
                                     is ToolResult.Failure -> "Error: ${event.result.reason}"

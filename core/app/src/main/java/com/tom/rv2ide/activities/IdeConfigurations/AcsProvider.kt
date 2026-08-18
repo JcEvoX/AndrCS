@@ -308,13 +308,13 @@ object AcsCommandInterface {
     /** Get the command arguments as array (for compatibility) */
     fun buildArgs(): Array<String> {
       val args = mutableListOf<String>()
-      manifestUrl?.let { args.addAll(listOf("-r", it)) }
+      manifestUrlCandidates.firstOrNull()?.let { args.addAll(listOf("-r", it)) }
       architecture?.let { args.addAll(listOf("-a", it.value)) }
       field?.let { args.addAll(listOf("-f", it.value)) }
       packageId?.let { args.addAll(listOf("-i", it)) }
       version?.let { args.addAll(listOf("-v", it)) }
       if (shouldListVersions) args.add("--list-versions")
-      directUrl?.let { args.addAll(listOf("--get", it)) }
+      directUrlCandidates.firstOrNull()?.let { args.addAll(listOf("--get", it)) }
       if (shouldDownload) args.add("-d")
       if (shouldShowHelp) args.add("-h")
       return args.toTypedArray()
