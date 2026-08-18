@@ -37,6 +37,8 @@ import java.io.File
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import com.tom.rv2ide.artificial.dialogs.ProviderSwitchDialog
@@ -147,6 +149,20 @@ class AIAgentManager(private val context: Context) {
 
     fun clearConversation() {
         currentAgent?.clearConversation()
+    }
+
+    /** Streaming chat with typed events for agent-style UI. */
+    fun executeChatStreaming(userRequest: String): Flow<AgentEvent> {
+        val agent = currentAgent
+        return if (agent == null) {
+            flowOf(AgentEvent.Error("No agent initialized"))
+        } else {
+            agent.chat(
+                prompt = userRequest,
+                tools = com.tom.rv2ide.artificial.tools.WorkspaceToolRegistry.definitions,
+                onToolCall = { call -> workspaceToolExecutor.execute(call) },
+            )
+        }
     }
 
     suspend fun executeRequest(userRequest: String, callback: AIAgentCallback) {

@@ -20,6 +20,11 @@ package com.tom.rv2ide.artificial.agents
 import android.content.Context
 import com.tom.rv2ide.artificial.project.awareness.ProjectTreeResult
 import com.tom.rv2ide.artificial.file.FileWriteResult
+import com.tom.rv2ide.artificial.tools.ToolDefinition
+import com.tom.rv2ide.artificial.tools.ToolCall
+import com.tom.rv2ide.artificial.tools.ToolResult
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /*
  * @author Mohammed-baqer-null @ https://github.com/Mohammed-baqer-null
@@ -41,6 +46,18 @@ interface AIAgent {
         language: String,
         projectStructure: String?
     ): Result<String>
+    
+    /** Streaming chat with tool execution. Returns a Flow of typed events for UI rendering. */
+    fun chat(
+        prompt: String,
+        tools: List<ToolDefinition> = emptyList(),
+        onToolCall: suspend (ToolCall) -> ToolResult = { _ ->
+            ToolResult.Failure("default", "Tool execution not wired")
+        },
+        maxIterations: Int = 8,
+    ): Flow<AgentEvent> = flowOf(
+        AgentEvent.Error("chat() not implemented for ${this.providerName}")
+    )
     
     fun recordModification(filePath: String, oldContent: String?, newContent: String, success: Boolean)
     fun undoLastModification(): Boolean

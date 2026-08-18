@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="8dp">
+
+    <!-- Agent label -->
+    <TextView
+        android:id="@+id/agentLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Agent"
+        android:textAppearance="?attr/textAppearanceLabelSmall"
+        android:textColor="?attr/colorPrimary"
+        android:letterSpacing="0.08"
+        android:paddingStart="4dp"
+        android:paddingBottom="2dp" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/agentCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        android:layout_marginEnd="56dp"
+        style="@style/Widget.Material3.CardView.Elevated">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp">
+
+            <!-- Thinking panel -->
+            <TextView
+                android:id="@+id/thinkingHeader"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Thinking ▸"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textColor="?attr/colorPrimary"
+                android:visibility="gone"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingVertical="4dp"
+                android:letterSpacing="0.04" />
+
+            <LinearLayout
+                android:id="@+id/thinkingPanel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:layout_marginBottom="8dp">
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?attr/colorOutlineVariant"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:id="@+id/thinkingText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="monospace"
+                    android:textIsSelectable="true"
+                    android:lineSpacingExtra="2dp" />
+
+            </LinearLayout>
+
+            <!-- Typing indicator -->
+            <TextView
+                android:id="@+id/typingIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="● ● ●"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:visibility="gone"
+                android:alpha="0.6" />
+
+            <!-- Body text -->
+            <TextView
+                android:id="@+id/agentText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textIsSelectable="true"
+                android:lineSpacingExtra="2dp" />
+
+            <!-- Tool calls -->
+            <LinearLayout
+                android:id="@+id/toolsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="8dp"
+                android:visibility="gone" />
+
+            <!-- Error hint -->
+            <TextView
+                android:id="@+id/errorHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="An error occurred"
+                android:textColor="?attr/colorError"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:visibility="gone"
+                android:layout_marginTop="4dp" />
+
+            <!-- Retry button -->
+            <TextView
+                android:id="@+id/retryBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Retry"
+                android:textColor="?attr/colorPrimary"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
+                android:visibility="gone"
+                android:layout_marginTop="6dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="4dp" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+</LinearLayout>
