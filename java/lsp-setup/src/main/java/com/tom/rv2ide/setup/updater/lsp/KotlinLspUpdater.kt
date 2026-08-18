@@ -58,7 +58,36 @@ import java.util.zip.ZipInputStream
  */
 class KotlinLspUpdater(private val context: Context) {
 
-    private val manifestUrl = "https://raw.githubusercontent.com/AndroidCSOfficial/acs-language-servers/refs/heads/main/servers-manifest.json"
+    private val manifestUpstream = "https://raw.githubusercontent.com/AndroidCSOfficial/acs-language-servers/refs/heads/main/servers-manifest.json"
+    private val manifestJsdelivr = "https://cdn.jsdelivr.net/gh/AndroidCSOfficial/acs-language-servers@main/servers-manifest.json"
+    private val manifestFastly   = "https://fastly.jsdelivr.net/gh/AndroidCSOfficial/acs-language-servers@main/servers-manifest.json"
+
+    private fun manifestCandidates(selfHosted: List<String> = emptyList()): List<String> =
+        buildList {
+          addAll(selfHosted)
+          add(manifestUpstream)
+          add(manifestJsdelivr)
+          add(manifestFastly)
+        }.distinct()
+
+    private fun fetchManifestCatching(): Manifest? {
+        val errors = mutableListOf<String>()
+        for (u in manifestCandidates()) {
+            try {
+                val c = URL(u).openConnection().apply {
+                    connectTimeout = 20_000; readTimeout = 45_000
+                    setRequestProperty("User-Agent", "AndrCS-LSP-Updater/1.0")
+                }
+                val body = c.getInputStream().bufferedReader().use { it.readText() }
+                if (body.isBlank()) { errors += "[$u] empty body"; continue }
+                val first = body.firstOrNull { !it.isWhitespace() }
+                if (first != '{') { errors += "[$u] non-JSON body prefix '$first' (likely 429 HTML)"; continue }
+                return Json.decodeFromString<Manifest>(body)
+            } catch (e: Exception) { errors += "[$u] ${e.javaClass.simpleName}: ${e.message}" }
+        }
+        android.util.Log.w("KotlinLspUpdater", errors.joinToString("\n"))
+        return null
+    }
 
     /**
      * Checks for available updates by fetching the remote manifest and comparing versions.
@@ -74,28 +103,34 @@ class KotlinLspUpdater(private val context: Context) {
      */
     fun checkForUpdates(currentVersion: String, onResult: ((Boolean, String?) -> Unit)? = null) {
         CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val jsonString = URL(manifestUrl).readText()
-                val manifest = Json.decodeFromString<Manifest>(jsonString)
-                val serverItem = manifest.Servers.firstOrNull()
-
-                if (serverItem != null) {
-                    val updateAvailable = isUpdateAvailable(serverItem.version, currentVersion)
-                    withContext(Dispatchers.Main) {
-                        onResult?.invoke(updateAvailable, serverItem.version)
-                        if (updateAvailable) {
-                            showUpdateDialog(serverItem.version, serverItem.link)
-                        }
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onResult?.invoke(false, null)
-                    }
-                }
-            } catch (e: Exception) {
+            val manifest = fetchManifestCatching()
+            if (manifest == null) {
                 withContext(Dispatchers.Main) {
                     onResult?.invoke(false, null)
-                    Toast.makeText(context, context.getString(R.string.lsp_update_check_failed, e.message), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.lsp_update_check_failed,
+                            "All LSP manifest mirrors failed (429 / unreachable)"),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
+
+            val serverItem = manifest.Servers.firstOrNull { it.id == "Kotlin" }
+                ?: manifest.Servers.firstOrNull()
+
+            if (serverItem != null) {
+                val updateAvailable = isUpdateAvailable(serverItem.version, currentVersion)
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(updateAvailable, serverItem.version)
+                    if (updateAvailable) {
+                        showUpdateDialog(serverItem.version, serverItem.link)
+                    }
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(false, null)
                 }
             }
         }

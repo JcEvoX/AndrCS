@@ -77,28 +77,90 @@ class ACSProvider(
 
   /** Download JSON manifest from URL */
   suspend fun downloadJson(url: String, silent: Boolean = false): String =
+      downloadJson(listOf(url), silent)
+
+  /** Download JSON manifest, trying multiple mirror URLs with fallback.
+   *  Each candidate is checked: HTTP success, non-empty body, and the first non-whitespace
+   *  character MUST be '{' (JSON object).  Anything else (e.g. 429 HTML page) is treated as
+   *  a mirror failure and the next candidate is tried. */
+  suspend fun downloadJson(urls: List<String>, silent: Boolean = false): String =
       withContext(Dispatchers.IO) {
-        if (!silent) {
-          logger.info("Downloading JSON from: {}", url)
+        if (urls.isEmpty()) {
+          throw IllegalArgumentException("No JSON manifest URLs provided")
         }
 
-        val request = Request.Builder().url(url).get().build()
-
-        client.newCall(request).execute().use { response ->
-          if (!response.isSuccessful) {
-            throw IOException("Failed to download JSON from: $url. HTTP ${response.code}")
+        val errors = mutableListOf<String>()
+        for ((index, url) in urls.withIndex()) {
+          if (!silent) {
+            logger.info(
+                "Downloading JSON from [{}/{}]: {}",
+                index + 1,
+                urls.size,
+                url,
+            )
           }
-
-          val body =
-              response.body?.string() ?: throw IOException("Downloaded JSON content is empty")
-
-          if (body.isEmpty()) {
-            throw IOException("Downloaded JSON content is empty")
+          val request = Request.Builder().url(url).get().build()
+          try {
+            client.newCall(request).execute().use { response ->
+              if (!response.isSuccessful) {
+                errors += "[$url] HTTP ${response.code}"
+                logger.warn("JSON mirror failed [{}]: HTTP {}", url, response.code)
+                return@use
+              }
+              val body =
+                  response.body?.string()
+                      ?: throw IOException("[$url] Downloaded JSON content is empty")
+              if (body.isEmpty()) {
+                errors += "[$url] Empty body"
+                logger.warn("JSON mirror failed [{}]: empty body", url)
+                return@use
+              }
+              val first = body.firstOrNull { !it.isWhitespace() }
+              if (first != '{') {
+                errors +=
+                    "[$url] Body does not start with JSON object (got '${first.take(1)}'). " +
+                        "Likely an HTML rate-limit / error page from the mirror."
+                logger.warn(
+                    "JSON mirror failed [{}]: non-JSON body prefix {}",
+                    url,
+                    body.take(80).replace("\n", "\\n"),
+                )
+                return@use
+              }
+              return@withContext body
+            }
+          } catch (e: IOException) {
+            errors += "[$url] ${e.javaClass.simpleName}: ${e.message}"
+            logger.warn("JSON mirror failed [{}] with exception", url, e)
           }
-
-          body
         }
+
+        throw IOException(
+            "All ${urls.size} JSON manifest URLs failed.\n" +
+                errors.joinToString("\n") { "  - $it" },
+        )
       }
+
+  private fun resolveJsonUrls(config: ACSConfig): List<String> {
+    return buildList {
+      addAll(config.jsonUrlCandidates)
+      if (!config.jsonUrl.isNullOrEmpty()) add(config.jsonUrl)
+    }.distinct()
+  }
+
+  private fun resolvePackageUrls(entry: PackageEntry, config: ACSConfig): List<String> {
+    return buildList {
+      addAll(config.packageUrlCandidates)
+      add(entry.url)
+    }.distinct()
+  }
+
+  private fun resolveDirectUrls(config: ACSConfig): List<String> {
+    return buildList {
+      addAll(config.directUrlCandidates)
+      if (!config.directUrl.isNullOrEmpty()) add(config.directUrl)
+    }.distinct()
+  }
 
   /** Parse JSON and find package entry matching criteria */
   fun findPackageEntry(jsonContent: String, config: ACSConfig): PackageEntry {
@@ -202,15 +264,15 @@ class ACSProvider(
   /** Get specific field from package entry */
   suspend fun getField(config: ACSConfig): String =
       withContext(Dispatchers.IO) {
-        if (config.jsonUrl.isNullOrEmpty()) {
+        val jsonUrls = resolveJsonUrls(config)
+        if (jsonUrls.isEmpty()) {
           throw IllegalArgumentException("JSON URL is required")
         }
-
         if (config.getField.isNullOrEmpty()) {
           throw IllegalArgumentException("Field name is required")
         }
 
-        val jsonContent = downloadJson(config.jsonUrl, silent = true)
+        val jsonContent = downloadJson(jsonUrls, silent = true)
         val entry = findPackageEntry(jsonContent, config)
 
         when (config.getField) {
@@ -280,42 +342,91 @@ class ACSProvider(
         }
       }
 
+  /** Download a single file, trying a list of mirror URLs. If SHA256 is provided, the
+   *  successful URL's output must match it — otherwise we continue trying mirrors. */
+  private suspend fun downloadFileWithFallback(
+      urls: List<String>,
+      outputFile: File,
+      callback: DownloadCallback? = null,
+      expectedSha256: String? = null,
+  ) {
+    require(urls.isNotEmpty()) { "No package download URLs provided" }
+
+    val errors = mutableListOf<String>()
+    for ((index, url) in urls.withIndex()) {
+      logger.info(
+          "Downloading package [{}/{}]: {} -> {}",
+          index + 1,
+          urls.size,
+          url,
+          outputFile.absolutePath,
+      )
+      try {
+        val ok = downloadFile(url, outputFile, callback)
+        if (!ok || !outputFile.exists() || outputFile.length() == 0L) {
+          errors += "[$url] downloadFile returned false / empty file"
+          if (outputFile.exists()) outputFile.delete()
+          continue
+        }
+        if (expectedSha256 != null) {
+          val actualHash = HashUtils.calculateSHA256(outputFile)
+          logger.info("Expected SHA256: {}", expectedSha256)
+          logger.info("Actual   SHA256: {}", actualHash)
+          if (actualHash.equals(expectedSha256, ignoreCase = true)) {
+            logger.info("SHA256 verification: PASSED")
+            return
+          } else {
+            errors +=
+                "[$url] SHA256 mismatch (expected $expectedSha256, got $actualHash). " +
+                    "Treating as bad mirror/corrupt payload and falling back."
+            logger.warn("Package mirror failed [{}]: sha256 mismatch", url)
+            outputFile.delete()
+            continue
+          }
+        }
+        return
+      } catch (e: Exception) {
+        errors += "[$url] ${e.javaClass.simpleName}: ${e.message}"
+        logger.warn("Package mirror failed [{}] with exception", url, e)
+        if (outputFile.exists()) outputFile.delete()
+      }
+    }
+
+    throw IOException(
+        "All ${urls.size} package mirrors failed for ${outputFile.name}.\n" +
+            errors.joinToString("\n") { "  - $it" },
+    )
+  }
+
   /** Download package based on config */
   suspend fun downloadPackage(config: ACSConfig, callback: DownloadCallback? = null): File =
       withContext(Dispatchers.IO) {
-        if (config.directUrl != null) {
-          // Direct URL download
-          val filename = config.directUrl.substringAfterLast('/').ifEmpty { "downloaded_file" }
+        val directUrls = resolveDirectUrls(config)
+        if (directUrls.isNotEmpty()) {
+          val filename =
+              directUrls
+                  .first()
+                  .substringAfterLast('/')
+                  .ifEmpty { "downloaded_file" }
           val outputFile = File(downloadDir, filename)
-
-          downloadFile(config.directUrl, outputFile, callback)
+          downloadFileWithFallback(directUrls, outputFile, callback, expectedSha256 = null)
           return@withContext outputFile
         }
 
-        // JSON manifest download
-        if (config.jsonUrl.isNullOrEmpty()) {
+        // JSON manifest download (manifest candidates, then package URL candidates)
+        val jsonUrls = resolveJsonUrls(config)
+        if (jsonUrls.isEmpty()) {
           throw IllegalArgumentException("JSON URL is required")
         }
 
-        val jsonContent = downloadJson(config.jsonUrl, silent = false)
+        val jsonContent = downloadJson(jsonUrls, silent = false)
         val entry = findPackageEntry(jsonContent, config)
 
         val outputFile = File(downloadDir, entry.filename)
-        downloadFile(entry.url, outputFile, callback)
+        val packageUrls = resolvePackageUrls(entry, config)
+        downloadFileWithFallback(packageUrls, outputFile, callback, expectedSha256 = entry.sha256)
 
-        // Verify SHA256 if provided
-        if (entry.sha256 != null) {
-          logger.info("Expected SHA256: {}", entry.sha256)
-          val actualHash = HashUtils.calculateSHA256(outputFile)
-          logger.info("Actual SHA256:   {}", actualHash)
-
-          if (HashUtils.verifySHA256(outputFile, entry.sha256)) {
-            logger.info("SHA256 verification: PASSED")
-          } else {
-            outputFile.delete()
-            throw IOException("SHA256 verification: FAILED. Downloaded file may be corrupted")
-          }
-        } else {
+        if (entry.sha256 == null) {
           logger.warn("No SHA256 checksum available for verification")
         }
 
@@ -333,8 +444,9 @@ class ACSProvider(
           return@withContext getField(config)
         }
 
-        if (config.directUrl != null) {
-          return@withContext config.directUrl
+        val directUrls = resolveDirectUrls(config)
+        if (directUrls.isNotEmpty()) {
+          return@withContext directUrls.first()
         }
 
         throw IllegalArgumentException(

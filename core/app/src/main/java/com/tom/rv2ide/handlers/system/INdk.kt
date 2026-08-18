@@ -239,13 +239,13 @@ class INdk(
               try {
                 val filenameResult =
                     withContext(Dispatchers.IO) {
-                      AcsCommandInterface.getPackageField(
-                          manifestUrl = AcsProvider.getManifestUrl,
-                          architecture = architecture,
-                          packageId = packageId,
-                          field = AcsCommandInterface.ManifestField.FILENAME,
-                          version = version,
-                      )
+                      AcsCommandInterface.newCommand()
+                          .readFromCandidates(AcsProvider.getManifestUrlCandidates())
+                          .getForArch(architecture)
+                          .withPackageId(packageId)
+                          .getField(AcsCommandInterface.ManifestField.FILENAME)
+                          .also { if (version != null) it.withVersion(version) }
+                          .execute()
                     }
 
                 infoFlashbar.dismiss()

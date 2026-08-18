@@ -53,6 +53,43 @@ abstract class LSPPreference(
   private var downloadUrl: String? = null
   private var serverVersion: String? = null
 
+  companion object {
+    private const val LSP_MANIFEST_UPSTREAM =
+        "https://raw.githubusercontent.com/AndroidCSOfficial/acs-language-servers/refs/heads/main/servers-manifest.json"
+    private const val LSP_MANIFEST_JSDELIVR =
+        "https://cdn.jsdelivr.net/gh/AndroidCSOfficial/acs-language-servers@main/servers-manifest.json"
+    private const val LSP_MANIFEST_FASTLY =
+        "https://fastly.jsdelivr.net/gh/AndroidCSOfficial/acs-language-servers@main/servers-manifest.json"
+
+    fun manifestCandidates(selfHosted: List<String> = emptyList()): List<String> = buildList {
+      addAll(selfHosted)
+      add(LSP_MANIFEST_UPSTREAM)
+      add(LSP_MANIFEST_JSDELIVR)
+      add(LSP_MANIFEST_FASTLY)
+    }.distinct()
+
+    fun fetchManifestBody(urls: List<String> = manifestCandidates()): String {
+      require(urls.isNotEmpty()) { "No LSP manifest URLs provided" }
+      val errors = mutableListOf<String>()
+      for (u in urls) {
+        try {
+          val c = URL(u).openConnection().apply {
+            connectTimeout = 20_000; readTimeout = 45_000
+            setRequestProperty("User-Agent", "AndrCS-LSP-Pref/1.0")
+          }
+          val body = c.getInputStream().bufferedReader().use { it.readText() }
+          if (body.isBlank()) { errors += "[$u] empty body"; continue }
+          val first = body.firstOrNull { !it.isWhitespace() }
+          if (first != '{') { errors += "[$u] non-JSON body prefix '$first' — likely rate-limit HTML"; continue }
+          return body
+        } catch (e: Exception) { errors += "[$u] ${e.javaClass.simpleName}: ${e.message}" }
+      }
+      throw IllegalStateException(
+          "All ${urls.size} LSP manifest mirrors failed:\n" + errors.joinToString("\n") { "  - $it" }
+      )
+    }
+  }
+
   override fun onConfigureDialog(preference: Preference, dialog: MaterialAlertDialogBuilder) {
     super.onConfigureDialog(preference, dialog)
     val binding = LayoutDialogTextViewBinding.inflate(LayoutInflater.from(dialog.context))
@@ -181,7 +218,7 @@ abstract class LSPPreference(
   private fun fetchServerInfo(serverId: String, callback: (String?, String?) -> Unit) {
     CoroutineScope(Dispatchers.IO).launch {
       try {
-        val json = URL(manifestUrl()).readText()
+        val json = fetchManifestBody(manifestCandidates())
         val jsonObject = JSONObject(json)
         val serversArray = jsonObject.getJSONArray("Servers")
 
@@ -260,7 +297,7 @@ abstract class LSPPreference(
           progressText.text = context.getString(string.lsp_server_fetching_info)
         }
 
-        val json = URL(manifestUrl()).readText()
+        val json = fetchManifestBody(manifestCandidates())
         val jsonObject = JSONObject(json)
         val serversArray = jsonObject.getJSONArray("Servers")
 
@@ -409,8 +446,7 @@ abstract class LSPPreference(
   }
 
   // TODO: allow the user to change repo url
-  private fun manifestUrl(): String =
-      "https://raw.githubusercontent.com/AndroidCSOfficial/acs-language-servers/refs/heads/main/servers-manifest.json"
+  private fun manifestUrl(): String = LSP_MANIFEST_UPSTREAM
 
   private fun showToast(context: android.content.Context, message: String) {
     android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()

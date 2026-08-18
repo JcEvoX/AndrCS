@@ -20,6 +20,7 @@ package com.tom.rv2ide.setup.servers.kotlin
 import android.content.Context
 import com.tom.rv2ide.setup.servers.ILanguageServerInstaller
 import com.tom.rv2ide.utils.Environment
+import java.io.IOException
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
@@ -34,7 +35,36 @@ class Kotlin(private val context: Context) : ILanguageServerInstaller {
   
   companion object {
     private const val SERVER_ID = "Kotlin"
-    private const val MANIFEST_URL = "https://raw.githubusercontent.com/AndroidCSOfficial/acs-language-servers/refs/heads/main/servers-manifest.json"
+    private const val MANIFEST_UPSTREAM = "https://raw.githubusercontent.com/AndroidCSOfficial/acs-language-servers/refs/heads/main/servers-manifest.json"
+    private const val MANIFEST_JSDELIVR = "https://cdn.jsdelivr.net/gh/AndroidCSOfficial/acs-language-servers@main/servers-manifest.json"
+    private const val MANIFEST_FASTLY = "https://fastly.jsdelivr.net/gh/AndroidCSOfficial/acs-language-servers@main/servers-manifest.json"
+
+    private fun manifestCandidates(selfHosted: List<String> = emptyList()): List<String> =
+        buildList {
+          addAll(selfHosted)
+          add(MANIFEST_UPSTREAM)
+          add(MANIFEST_JSDELIVR)
+          add(MANIFEST_FASTLY)
+        }.distinct()
+
+    private fun fetchTextWithFallback(urls: List<String>): String {
+      require(urls.isNotEmpty()) { "No URLs provided" }
+      val errors = mutableListOf<String>()
+      for (u in urls) {
+        try {
+          val c = URL(u).openConnection().apply {
+            connectTimeout = 20_000; readTimeout = 45_000
+            setRequestProperty("User-Agent", "AndrCS-LSP/1.0")
+          }
+          val body = c.getInputStream().bufferedReader().use { it.readText() }
+          if (body.isBlank()) { errors += "[$u] empty body"; continue }
+          val first = body.firstOrNull { !it.isWhitespace() }
+          if (first != '{') { errors += "[$u] non-JSON body (likely 429 HTML)"; continue }
+          return body
+        } catch (e: Exception) { errors += "[$u] ${e.javaClass.simpleName}: ${e.message}" }
+      }
+      throw IOException("All ${urls.size} LSP manifest mirrors failed:\n" + errors.joinToString("\n") { "  - $it" })
+    }
   }
   
   override fun isInstalled(): Boolean {
@@ -47,7 +77,7 @@ class Kotlin(private val context: Context) : ILanguageServerInstaller {
     return try {
       onOutput("Fetching Kotlin language server information...")
       
-      val json = URL(MANIFEST_URL).readText()
+      val json = fetchTextWithFallback(manifestCandidates())
       val jsonObject = JSONObject(json)
       val serversArray = jsonObject.getJSONArray("Servers")
       

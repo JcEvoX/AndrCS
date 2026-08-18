@@ -76,18 +76,24 @@ object AcsCommandInterface {
 
   /** ACS command builder for fluent API */
   class AcsCommandBuilder {
-    private var manifestUrl: String? = null
+    private var manifestUrlCandidates: MutableList<String> = mutableListOf()
     private var architecture: Architecture? = null
     private var packageId: String? = null
     private var version: String? = null
     private var field: ManifestField? = null
-    private var directUrl: String? = null
+    private var directUrlCandidates: MutableList<String> = mutableListOf()
+    private var packageUrlCandidates: MutableList<String> = mutableListOf()
     private var shouldDownload: Boolean = false
     private var shouldListVersions: Boolean = false
     private var shouldShowHelp: Boolean = false
 
     fun readFrom(manifestUrl: String): AcsCommandBuilder {
-      this.manifestUrl = manifestUrl
+      manifestUrlCandidates += manifestUrl
+      return this
+    }
+
+    fun readFromCandidates(urls: Iterable<String>): AcsCommandBuilder {
+      manifestUrlCandidates.addAll(urls)
       return this
     }
 
@@ -117,7 +123,12 @@ object AcsCommandInterface {
     }
 
     fun downloadFromUrl(url: String): AcsCommandBuilder {
-      this.directUrl = url
+      directUrlCandidates += url
+      return this
+    }
+
+    fun withPackageMirror(url: String): AcsCommandBuilder {
+      packageUrlCandidates += url
       return this
     }
 
@@ -150,8 +161,13 @@ object AcsCommandInterface {
           return executeGetField()
         }
 
-        if (directUrl != null) {
-          return AcsResult(success = true, output = directUrl!!, errorOutput = "", exitCode = 0)
+        if (directUrlCandidates.isNotEmpty()) {
+          return AcsResult(
+              success = true,
+              output = directUrlCandidates.first(),
+              errorOutput = "",
+              exitCode = 0,
+          )
         }
 
         AcsResult(
@@ -168,7 +184,9 @@ object AcsCommandInterface {
     private fun executeListVersions(): AcsResult {
       return runBlocking {
         try {
-          val jsonContent = acsLibProvider.downloadJson(manifestUrl!!, silent = true)
+          val candidates = manifestUrlCandidates.toList()
+          require(candidates.isNotEmpty()) { "Manifest URL is required" }
+          val jsonContent = acsLibProvider.downloadJson(candidates, silent = true)
           val versions =
               acsLibProvider.listAvailableVersions(jsonContent, architecture!!.value, packageId)
 
@@ -191,11 +209,12 @@ object AcsCommandInterface {
         try {
           val config =
               ACSConfig(
-                  jsonUrl = manifestUrl,
+                  jsonUrlCandidates = manifestUrlCandidates.toList(),
                   architecture = architecture!!.value,
                   packageId = packageId,
                   version = version,
-                  directUrl = directUrl,
+                  directUrlCandidates = directUrlCandidates.toList(),
+                  packageUrlCandidates = packageUrlCandidates.toList(),
                   shouldDownload = true,
               )
 
@@ -236,9 +255,11 @@ object AcsCommandInterface {
     private fun executeGetField(): AcsResult {
       return runBlocking {
         try {
+          val candidates = manifestUrlCandidates.toList()
+          require(candidates.isNotEmpty()) { "Manifest URL is required" }
           val config =
               ACSConfig(
-                  jsonUrl = manifestUrl!!,
+                  jsonUrlCandidates = candidates,
                   architecture = architecture!!.value,
                   packageId = packageId,
                   version = version,
@@ -381,41 +402,58 @@ object AcsProvider {
   const val ACS_BUILD_SYSTEM_REPONAME = "acs-build-system"
   const val ACS_BUILD_SYSTEM_REPOURL = "https://$REPO_HOST/$REPO_OWNER/$ACS_BUILD_SYSTEM_REPONAME"
 
-  /** Manifest url getter function */
-  val getManifestUrl: String = "${ACS_BUILD_SYSTEM_REPOURL}/raw/refs/heads/main/acs-manifest.json"
+  private const val MANIFEST_UPSTREAM =
+      "${ACS_BUILD_SYSTEM_REPOURL}/raw/refs/heads/main/acs-manifest.json"
+  private const val MANIFEST_JSDELIVR =
+      "https://cdn.jsdelivr.net/gh/$REPO_OWNER/$ACS_BUILD_SYSTEM_REPONAME@main/acs-manifest.json"
+  private const val MANIFEST_FASTLY =
+      "https://fastly.jsdelivr.net/gh/$REPO_OWNER/$ACS_BUILD_SYSTEM_REPONAME@main/acs-manifest.json"
+
+  /** Primary manifest URL — kept for backwards compat */
+  val getManifestUrl: String = MANIFEST_UPSTREAM
+
+  /** Full list of manifest mirror candidates, in priority order.
+   *  Prepend your self-hosted mirror URL(s) for 100% offloading. */
+  fun getManifestUrlCandidates(
+      selfHostedManifests: List<String> = emptyList(),
+  ): List<String> = buildList {
+    addAll(selfHostedManifests)
+    add(MANIFEST_UPSTREAM)
+    add(MANIFEST_JSDELIVR)
+    add(MANIFEST_FASTLY)
+  }.distinct()
 
   /** Enhanced ACS runner with proper command interface */
   fun acsRunner(
       packageId: String,
       artifactVersion: String? = null,
       arch: AcsCommandInterface.Architecture,
+      selfHostedManifests: List<String> = emptyList(),
+      selfHostedPackageMirrors: List<String> = emptyList(),
   ): AcsCommandInterface.AcsResult {
-    return if (artifactVersion != null) {
-      AcsCommandInterface.downloadPackage(
-          manifestUrl = getManifestUrl,
-          architecture = arch,
-          packageId = packageId,
-          version = artifactVersion,
-      )
-    } else {
-      AcsCommandInterface.downloadPackage(
-          manifestUrl = getManifestUrl,
-          architecture = arch,
-          packageId = packageId,
-      )
-    }
+    val builder =
+        AcsCommandInterface.newCommand()
+            .readFromCandidates(getManifestUrlCandidates(selfHostedManifests))
+            .getForArch(arch)
+            .withPackageId(packageId)
+            .enableDownload()
+    selfHostedPackageMirrors.forEach { builder.withPackageMirror(it) }
+    artifactVersion?.let { builder.withVersion(it) }
+    return builder.execute()
   }
 
   /** List available versions for a package */
   fun listAvailableVersions(
       packageId: String,
       arch: AcsCommandInterface.Architecture,
+      selfHostedManifests: List<String> = emptyList(),
   ): AcsCommandInterface.AcsResult {
-    return AcsCommandInterface.listVersions(
-        manifestUrl = getManifestUrl,
-        architecture = arch,
-        packageId = packageId,
-    )
+    return AcsCommandInterface.newCommand()
+        .readFromCandidates(getManifestUrlCandidates(selfHostedManifests))
+        .getForArch(arch)
+        .withPackageId(packageId)
+        .listVersions()
+        .execute()
   }
 
   /** Get package version information */
@@ -423,28 +461,15 @@ object AcsProvider {
       packageId: String,
       arch: AcsCommandInterface.Architecture,
       version: String? = null,
+      selfHostedManifests: List<String> = emptyList(),
   ): AcsCommandInterface.AcsResult {
-    return AcsCommandInterface.getPackageField(
-        manifestUrl = getManifestUrl,
-        architecture = arch,
-        packageId = packageId,
-        field = AcsCommandInterface.ManifestField.VERSION,
-        version = version,
-    )
-  }
-
-  /** Get package URL */
-  fun getPackageUrl(
-      packageId: String,
-      arch: AcsCommandInterface.Architecture,
-      version: String? = null,
-  ): AcsCommandInterface.AcsResult {
-    return AcsCommandInterface.getPackageField(
-        manifestUrl = getManifestUrl,
-        architecture = arch,
-        packageId = packageId,
-        field = AcsCommandInterface.ManifestField.URL,
-        version = version,
-    )
+    val cmd =
+        AcsCommandInterface.newCommand()
+            .readFromCandidates(getManifestUrlCandidates(selfHostedManifests))
+            .getForArch(arch)
+            .withPackageId(packageId)
+            .getField(AcsCommandInterface.ManifestField.VERSION)
+    version?.let { cmd.withVersion(it) }
+    return cmd.execute()
   }
 }

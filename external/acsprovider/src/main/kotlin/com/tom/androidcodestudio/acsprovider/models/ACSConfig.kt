@@ -23,10 +23,13 @@ package com.tom.androidcodestudio.acsprovider.models
 
 data class ACSConfig(
     val jsonUrl: String? = null,
+    val jsonUrlCandidates: List<String> = emptyList(),
     val architecture: String,
     val packageId: String? = null,
     val version: String? = null,
     val getField: String? = null,
     val directUrl: String? = null,
+    val directUrlCandidates: List<String> = emptyList(),
+    val packageUrlCandidates: List<String> = emptyList(),
     val shouldDownload: Boolean = false,
 )

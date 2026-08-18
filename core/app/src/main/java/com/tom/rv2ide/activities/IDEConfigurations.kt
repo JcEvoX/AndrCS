@@ -174,19 +174,23 @@ class IDEConfigurations : EdgeToEdgeIDEActivity() {
 
     lifecycleScope.launch(Dispatchers.IO) {
       try {
+        val manifestCandidates = AcsProvider.getManifestUrlCandidates()
+
         val versionsResult =
-            AcsCommandInterface.listVersions(
-                manifestUrl = AcsProvider.getManifestUrl,
-                architecture = architecture,
-                packageId = "android-native-kit",
-            )
+            AcsCommandInterface.newCommand()
+                .readFromCandidates(manifestCandidates)
+                .getForArch(architecture)
+                .withPackageId("android-native-kit")
+                .listVersions()
+                .execute()
 
         val cmakeVersionsResult =
-            AcsCommandInterface.listVersions(
-                manifestUrl = AcsProvider.getManifestUrl,
-                architecture = architecture,
-                packageId = "android-cmake",
-            )
+            AcsCommandInterface.newCommand()
+                .readFromCandidates(manifestCandidates)
+                .getForArch(architecture)
+                .withPackageId("android-cmake")
+                .listVersions()
+                .execute()
 
         withContext(Dispatchers.Main) {
           // Process NDK versions
