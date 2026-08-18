@@ -29,6 +29,6 @@ configurations.all {
 
 dependencies {
     api(files("../libs/java-compiler.jar"))
-    // api(files("../libs/jdk-compiler.jar"))
-    api(project(":jdk-compiler"))
+    api(files("../libs/jdk-compiler.jar"))
+    // api(projects.buildDeps.jdkCompiler)
 }

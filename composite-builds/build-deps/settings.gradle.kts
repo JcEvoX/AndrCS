@@ -51,9 +51,7 @@ dependencyResolutionManagement {
 include(
   ":appintro",
   ":google-java-format",
-  ":java-compiler",
   ":javac",
-  ":jdk-compiler",
   ":logback-core",
 )
 
