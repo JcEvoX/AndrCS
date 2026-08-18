@@ -118,7 +118,7 @@ class ACSProvider(
               val first = body.firstOrNull { !it.isWhitespace() }
               if (first != '{') {
                 errors +=
-                    "[$url] Body does not start with JSON object (got '${first.take(1)}'). " +
+                    "[$url] Body does not start with JSON object (got '$first'). " +
                         "Likely an HTML rate-limit / error page from the mirror."
                 logger.warn(
                     "JSON mirror failed [{}]: non-JSON body prefix {}",
