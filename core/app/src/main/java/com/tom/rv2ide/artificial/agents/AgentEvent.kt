@@ -1,8 +1,5 @@
 package com.tom.rv2ide.artificial.agents
 
-import com.tom.rv2ide.artificial.tools.ToolCall
-import com.tom.rv2ide.artificial.tools.ToolResult
-
 /** Typed events emitted by an AI agent during a streaming chat session. */
 sealed interface AgentEvent {
     /** Agent is reasoning / planning — display in a collapsible panel. */
@@ -12,10 +9,10 @@ sealed interface AgentEvent {
     data class TextDelta(val text: String) : AgentEvent
 
     /** Agent is about to invoke a tool. */
-    data class ToolCall(val call: ToolCall) : AgentEvent
+    data class ToolCall(val call: com.tom.rv2ide.artificial.tools.ToolCall) : AgentEvent
 
     /** Result of a tool invocation. */
-    data class ToolResult(val result: ToolResult) : AgentEvent
+    data class ToolResult(val result: com.tom.rv2ide.artificial.tools.ToolResult) : AgentEvent
 
     /** Final complete response (when streaming is done). */
     data class FinalResponse(val text: String) : AgentEvent
