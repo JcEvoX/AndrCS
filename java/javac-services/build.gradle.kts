@@ -37,11 +37,9 @@ android {
 
 dependencies {
     api(libs.composite.javac)
-    // Directly include jdk-compiler.jar so AGP properly dexes it into the APK.
-    // Transitive file dependencies from the java-library 'javac' module are not
-    // reliably included in the Android dex output, causing ClassNotFoundException
-    // at runtime (e.g. openjdk.tools.javac.file.CacheFSInfo).
-    api(files("../../composite-builds/build-deps/libs/jdk-compiler.jar"))
+    // jdk-compiler.jar must be dexed into the APK. Using fileTree("libs")
+    // is the most reliable way for AGP to include it in dex output.
+    api(fileTree("libs"))
 
     implementation(libs.common.kotlin)
     implementation(libs.common.utilcode)
