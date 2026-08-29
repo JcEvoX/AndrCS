@@ -267,6 +267,14 @@ dependencies {
   // implementation(libs.composite.javapoet)
   implementation(files(rootProject.file("composite-builds/build-deps/libs/javapoet.jar")))
 
+  // jdk-compiler.jar contains the relocated OpenJDK javac classes (openjdk.tools.javac.*)
+  // used at runtime by javac-services (e.g. CacheFSInfo). Relying on transitive file-dep
+  // resolution through the composite 'javac' build -> javac-services Android library was
+  // NOT reliably dexing these classes into the APK (NoClassDefFoundError at runtime).
+  // Adding it directly to the app module guarantees AGP dexes it. This mirrors the
+  // javapoet.jar pattern above. Resource conflicts are handled by pickFirsts above.
+  implementation(files(rootProject.file("java/javac-services/libs/jdk-compiler.jar")))
+
   // Local projects here
   implementation(projects.core.projectdata)
   implementation(projects.ideconfigurations)
