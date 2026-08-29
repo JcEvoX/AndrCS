@@ -27,10 +27,23 @@ plugins {
 
 android {
     namespace = "${BuildConfig.packageName}.javac.services"
-    
+
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+    }
+
+    packaging {
+        resources {
+            // jdk-compiler.jar is present both as a transitive dep from the
+            // composite 'javac' module and as a direct fileTree("libs") dep.
+            // Pick first to avoid mergeDebugJavaResource conflicts.
+            pickFirsts += "META-INF/**"
+            pickFirsts += "openjdk/**"
+            pickFirsts += "javac/**"
+            pickFirsts += "sun/**"
+            pickFirsts += "com/sun/**"
         }
     }
 }

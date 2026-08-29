@@ -29,6 +29,5 @@ configurations.all {
 
 dependencies {
     api(files("../libs/java-compiler.jar"))
-    // jdk-compiler.jar is now included directly in javac-services module
-    // to ensure proper dexing. See java/javac-services/build.gradle.kts
+    api(files("../libs/jdk-compiler.jar"))
 }
