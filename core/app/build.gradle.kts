@@ -116,6 +116,14 @@ android {
       pickFirsts += "kotlin/**.kotlin_builtins"
       pickFirsts += "THIRD-PARTY"
       pickFirsts += "LICENSE"
+      // jdk-compiler.jar is included both transitively (from composite javac
+      // module) and directly (from javac-services/libs). Pick first to avoid
+      // mergeDebugJavaResource duplicate file conflicts.
+      pickFirsts += "openjdk/**"
+      pickFirsts += "javac/**"
+      pickFirsts += "sun/**"
+      pickFirsts += "com/sun/**"
+      pickFirsts += "META-INF/**"
     }
   }
 
